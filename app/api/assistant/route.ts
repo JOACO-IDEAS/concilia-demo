@@ -1,4 +1,4 @@
-import { agentTools, resolveToolArgs, runAgentTool, trustedPresentation, trustedResponse, updateConversationState, type ConversationState } from "../../../lib/agent-tools";
+import { agentTools, inferDeterministicRead, resolveToolArgs, runAgentTool, trustedPresentation, trustedResponse, updateConversationState, type ConversationState } from "../../../lib/agent-tools";
 import { consumeAgentQuota } from "../../../lib/rate-limit";
 
 export const runtime = "edge";
@@ -44,10 +44,16 @@ export async function POST(request: Request) {
     const latest = messages.at(-1)?.content.toLowerCase() || "";
     if (/system prompt|api[_ ]?key|ignor[aá].*instrucciones|ejecut[aá].*c[oó]digo|\bsql\b|borr[aá].*datos/.test(latest)) return Response.json({ answer: "No puedo ayudar con credenciales, instrucciones internas, código, SQL ni acciones destructivas. El Agente opera únicamente sobre datos sintéticos de ConcilIA y con consultas de solo lectura.", topic: "unsupported", result: null, action: null, suggested_questions: ["¿Qué requiere mi atención hoy?", "¿Qué pagos necesitan revisión?"], state });
 
-    const upstream = await fetch("https://api.openai.com/v1/responses", { method: "POST", signal: controller.signal, headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: MODEL, instructions: `${plannerInstructions}\nESTADO ESTRUCTURADO ACTUAL:\n${JSON.stringify(state)}`, input: messages, tools: agentTools, tool_choice: "auto", parallel_tool_calls: false, max_output_tokens: 160, store: false }) });
-    if (!upstream.ok) throw new Error(`upstream_${upstream.status}`);
-    const plan = await upstream.json() as any;
-    const call = (plan.output ?? []).find((x: any) => x.type === "function_call");
+    let plan: any = null;
+    let call: any = inferDeterministicRead(messages.at(-1)?.content ?? "", state);
+    if (call) {
+      call = { name: call.name, arguments: JSON.stringify(call.arguments) };
+    } else {
+      const upstream = await fetch("https://api.openai.com/v1/responses", { method: "POST", signal: controller.signal, headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: MODEL, instructions: `${plannerInstructions}\nESTADO ESTRUCTURADO ACTUAL:\n${JSON.stringify(state)}`, input: messages, tools: agentTools, tool_choice: "auto", parallel_tool_calls: false, max_output_tokens: 160, store: false }) });
+      if (!upstream.ok) throw new Error(`upstream_${upstream.status}`);
+      plan = await upstream.json() as any;
+      call = (plan.output ?? []).find((x: any) => x.type === "function_call");
+    }
     if (!call) return Response.json({ answer: "Todavía no puedo consultar ese detalle.", topic: "unsupported", result: null, action: null, suggested_questions: ["¿Qué requiere mi atención hoy?", "¿Dónde tengo mayor mora?"], state });
     tool = String(call.name);
     let rawArgs: Record<string, unknown> = {};
@@ -57,7 +63,7 @@ export async function POST(request: Request) {
     const nextState = updateConversationState(state, tool, result);
     const response = trustedResponse(result);
     const presentation = trustedPresentation(result);
-    console.info("agent_request", { model: MODEL, latencyMs: Date.now() - started, inputTokens: plan.usage?.input_tokens ?? 0, outputTokens: plan.usage?.output_tokens ?? 0, tool, status: "ok" });
+    console.info("agent_request", { model: MODEL, latencyMs: Date.now() - started, inputTokens: plan?.usage?.input_tokens ?? 0, outputTokens: plan?.usage?.output_tokens ?? 0, tool, status: "ok" });
     return Response.json({ answer: response.answer, suggested_questions: response.suggestions, ...presentation, state: nextState });
   } catch (error) {
     console.warn("agent_request", { model: MODEL, latencyMs: Date.now() - started, tool, status: error instanceof DOMException && error.name === "AbortError" ? "timeout" : "error" });
