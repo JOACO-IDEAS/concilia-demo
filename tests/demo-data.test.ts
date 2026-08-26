@@ -108,12 +108,18 @@ test("Vercel agent preserves server-only, stateless and read-only protections", 
 });
 
 test("analytics never includes prompts, responses, or canonical operational facts", async () => {
-  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-  const events = [...page.matchAll(/track\(([^\n;]+)\)/g)].map((match) => match[1]);
+  const [page, route] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/analytics/route.ts", import.meta.url), "utf8"),
+  ]);
+  const events = [...page.matchAll(/trackShowroomEvent\(([^\n;]+)\)/g)].map((match) => match[1]);
   assert.ok(events.length >= 5);
   for (const event of events) {
     assert.equal(/\bq\b|input|message|answer|amount|unit|document|provider/i.test(event), false, `analytics payload may expose content: ${event}`);
   }
+  assert.equal(/x-forwarded-for|sessionId|prompt|answer|amount|documentId|unitId|provider/i.test(route), false);
+  assert.ok(route.includes("EVENTS.has(body.event)"));
+  assert.ok(route.includes("VIEWS.has(body.properties.view)"));
 });
 
 test("official wordmark replaces the legacy isotipo without recreating the logo", async () => {
