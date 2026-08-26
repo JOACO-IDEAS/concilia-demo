@@ -56,21 +56,14 @@ button {
   color: #fff;
 }
 .brand-wordmark {
-  position: relative;
   display: block;
-  width: 183px;
-  height: 45px;
-  overflow: hidden;
-  border-radius: 8px;
-  background: #fff;
+  width: 154px;
+  line-height: 0;
 }
 .brand-wordmark img {
-  position: absolute;
-  width: 286px;
+  display: block;
+  width: 100%;
   height: auto;
-  left: -52px;
-  top: -53px;
-  max-width: none;
 }
 .brand small {
   display: block;
