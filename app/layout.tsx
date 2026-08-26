@@ -3,8 +3,13 @@ import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ConcilIA — Product Vision Demo",
-  description: "Prototipo interactivo de la capa inteligente de operación para administradores de consorcios.",
+  title: "ConcilIA — Demo operativa V2.1",
+  description: "Showroom interactivo de ConcilIA para administradores de consorcios, con datos 100% sintéticos.",
+  openGraph: {
+    title: "ConcilIA — Demo operativa V2.1",
+    description: "Conocé una operación administrativa asistida por IA con datos 100% sintéticos.",
+    type: "website",
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
