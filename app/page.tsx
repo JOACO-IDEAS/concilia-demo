@@ -1,9 +1,9 @@
 "use client";
 
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
-import { track } from "@vercel/analytics";
 import { demoData, demoSelectors } from "../lib/demo-data";
 import { CONCILIA_WORDMARK_DATA_URI } from "../lib/brand-asset";
+import { trackShowroomEvent } from "../lib/client-analytics";
 
 type View =
   | "home"
@@ -198,12 +198,12 @@ export default function ProductDemo() {
   const [doc, setDoc] = useState<(typeof documents)[number] | null>(null);
   const [selectedOrganization, setSelectedOrganization] = useState("Arenales 2210");
   useEffect(() => {
-    const engaged = window.setTimeout(() => track("engagement_30s"), 30_000);
+    const engaged = window.setTimeout(() => trackShowroomEvent("engagement_30s"), 30_000);
     return () => window.clearTimeout(engaged);
   }, []);
   const go = (next: View) => {
-    track("view_opened", { view: next });
-    if (next === "agent") track("agent_opened");
+    trackShowroomEvent("view_opened", { view: next });
+    if (next === "agent") trackShowroomEvent("agent_opened");
     setView(next);
     setSearchOpen(false);
     setMenuOpen(false);
@@ -219,7 +219,7 @@ export default function ProductDemo() {
     window.setTimeout(() => go("home"), 700);
   };
   const resetDemo = () => {
-    track("demo_reset");
+    trackShowroomEvent("demo_reset");
     setResolved(false);
     setDoc(null);
     setNotifications(false);
@@ -1283,7 +1283,7 @@ function Agent({ go }: { go: (v: View) => void }) {
   const send = async (text = input) => {
     const q = text.trim();
     if (!q || loading) return;
-    track("agent_question_sent");
+    trackShowroomEvent("agent_question_sent");
     const conversation = [...messages, { role: "user" as const, text: q }];
     setMessages(conversation);
     setInput("");
@@ -1398,7 +1398,7 @@ function Agent({ go }: { go: (v: View) => void }) {
                   {m.action && (
                     <button
                       className="deep-link"
-                      onClick={() => { track("primary_click", { target: "agent_deep_link" }); go(m.action!.view); }}
+                      onClick={() => { trackShowroomEvent("primary_click", { target: "agent_deep_link" }); go(m.action!.view); }}
                     >
                       {m.action.label}
                       <Icon name="arrow" size={14} />
