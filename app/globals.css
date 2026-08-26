@@ -49,44 +49,32 @@ button {
 }
 .brand {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
   padding: 0 9px 24px;
   color: #fff;
 }
-.brand-symbol {
-  width: 34px;
-  height: 34px;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 3px;
-}
-.brand-symbol i {
-  width: 5px;
-  border-radius: 5px;
-  background: #7f70ee;
-}
-.brand-symbol i:nth-child(1) {
-  height: 16px;
-}
-.brand-symbol i:nth-child(2) {
-  height: 28px;
-}
-.brand-symbol i:nth-child(3) {
-  height: 21px;
-}
-.brand b {
+.brand-wordmark {
+  position: relative;
   display: block;
-  font-size: 22px;
-  letter-spacing: -0.7px;
+  width: 183px;
+  height: 45px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #fff;
 }
-.brand b span {
-  color: #9486f2;
+.brand-wordmark img {
+  position: absolute;
+  width: 286px;
+  height: auto;
+  left: -52px;
+  top: -53px;
+  max-width: none;
 }
 .brand small {
   display: block;
-  margin-top: 2px;
+  margin-left: 3px;
   color: #78879f;
   font-size: 10px;
   text-transform: uppercase;
@@ -2306,6 +2294,8 @@ main {
   }
   .brand {
     padding: 0;
+    flex-direction: row;
+    align-items: center;
   }
   .mobile-menu-toggle {
     display: grid;
