@@ -78,10 +78,11 @@ test("agent tools expose exactly the canonical screen facts", () => {
 
 test("UI consumes selectors instead of contradictory legacy totals", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-  for (const legacy of ["$1.494.000", "$1.284.000", "Arenales 2210 · 8 unidades", "<b>92%</b>", "<b>$8,7M</b>"]) assert.equal(page.includes(legacy), false, `legacy literal remains: ${legacy}`);
+  for (const legacy of ["$1.494.000", "$1.284.000", "Arenales 2210 · 8 unidades", "<b>92%</b>", "<b>$8,7M</b>", "terminada en 2193"]) assert.equal(page.includes(legacy), false, `legacy literal remains: ${legacy}`);
   assert.ok(page.includes("demoSelectors.identifiedToday(resolved)"));
   assert.ok(page.includes("demoSelectors.attentionCases(resolved)"));
   assert.ok(page.includes("demoSelectors.debtTotal()"));
+  assert.ok(page.includes("featuredSignalSuffix"));
 });
 
 test("Vercel agent preserves server-only, stateless and read-only protections", async () => {
