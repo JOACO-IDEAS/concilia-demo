@@ -99,6 +99,8 @@ test("Vercel agent preserves server-only, stateless and read-only protections", 
   assert.equal(page.includes("OPENAI_API_KEY"), false);
   assert.ok(limiter.includes('fixedWindow(30, "1 h")'));
   assert.ok(limiter.includes('fixedWindow(20, "24 h")'));
+  assert.ok(limiter.includes("UPSTASH_REDIS_REST_KV_REST_API_URL"));
+  assert.ok(limiter.includes("UPSTASH_REDIS_REST_KV_REST_API_TOKEN"));
   assert.equal(limiter.includes("new Map"), false);
   assert.equal(packageJson.includes("vinext"), false);
   assert.equal(packageJson.includes("wrangler"), false);
