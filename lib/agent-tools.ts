@@ -54,6 +54,30 @@ export function resolveToolArgs(name: string, raw: Json, state: ConversationStat
   return args;
 }
 
+export function inferDeterministicRead(
+  message: string,
+  state: ConversationState,
+): { name: "UNIT_LOOKUP"; arguments: Json } | null {
+  const text = norm(message);
+  const explicitOrganization = demoData.consortia.find((item) =>
+    text.includes(norm(item.name)),
+  )?.name;
+  const unitMatch = text.match(/\b(?:unidad\s*)?(\d{1,3}[a-z])\b/i);
+  const explicitUnit = unitMatch?.[1]?.toUpperCase() ?? null;
+  const asksAboutUnit =
+    /\b(quien|propietari|corresponde|unidad|saldo|estado|debe)\b/.test(text);
+  const asksAboutAnotherDomain =
+    /\b(pago|transferencia|conciliacion|factura|documento|comprobante)\b/.test(
+      text,
+    );
+  const organization = explicitOrganization ?? state.activeOrganization ?? null;
+  const unit = explicitUnit ?? (asksAboutUnit ? state.activeUnit ?? null : null);
+  if (organization && unit && asksAboutUnit && !asksAboutAnotherDomain) {
+    return { name: "UNIT_LOOKUP", arguments: { organization, unit } };
+  }
+  return null;
+}
+
 export function runAgentTool(name: string, args: Json): ToolResult {
   switch (name) {
     case "PORTFOLIO_OVERVIEW": return { kind: "portfolio", args, data: { consortia: demoData.portfolio.consortia, units: demoData.portfolio.units, attention: demoSelectors.attentionCases().length, decisions: demoSelectors.decisionCases().length, pending: demoSelectors.debtTotal(), pendingUnits: demoSelectors.pendingUnits().length } };
