@@ -3,6 +3,7 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { track } from "@vercel/analytics";
 import { demoData, demoSelectors } from "../lib/demo-data";
+import { CONCILIA_WORDMARK_DATA_URI } from "../lib/brand-asset";
 
 type View =
   | "home"
@@ -278,17 +279,10 @@ export default function ProductDemo() {
     <div className="product-shell">
       <aside className={`sidebar ${menuOpen ? "mobile-open" : ""}`}>
         <div className="brand">
-          <span className="brand-symbol">
-            <i />
-            <i />
-            <i />
+          <span className="brand-wordmark" aria-label="ConcilIA">
+            <img src={CONCILIA_WORDMARK_DATA_URI} alt="ConcilIA" />
           </span>
-          <div>
-            <b>
-              Concil<span>IA</span>
-            </b>
-            <small>Operación</small>
-          </div>
+          <small>Operación</small>
         </div>
         <button className="mobile-menu-toggle" onClick={() => setMenuOpen((open) => !open)} aria-label="Abrir navegación" aria-expanded={menuOpen}>
           <Icon name={menuOpen ? "close" : "filter"} />
