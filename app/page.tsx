@@ -681,7 +681,7 @@ function Resolution({
         <div>
           <p>TRANSFERENCIA BANCARIA · {featuredDate}</p>
           <h1>{featuredAmount}</h1>
-          <span>Banco Galicia · referencia terminada en 2193</span>
+          <span>{featuredPayment.bank} · señal terminada en {featuredSignalSuffix}</span>
         </div>
         <Status tone="warning">Requiere tu confirmación</Status>
       </div>
