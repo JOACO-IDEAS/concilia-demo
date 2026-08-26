@@ -113,3 +113,16 @@ test("analytics never includes prompts, responses, or canonical operational fact
     assert.equal(/\bq\b|input|message|answer|amount|unit|document|provider/i.test(event), false, `analytics payload may expose content: ${event}`);
   }
 });
+
+test("official wordmark replaces the legacy isotipo without recreating the logo", async () => {
+  const [page, styles, brand] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../lib/brand-asset.ts", import.meta.url), "utf8"),
+  ]);
+  assert.ok(page.includes("CONCILIA_WORDMARK_DATA_URI"));
+  assert.ok(page.includes('alt="ConcilIA"'));
+  assert.equal(page.includes("brand-symbol"), false);
+  assert.equal(styles.includes(".brand-symbol"), false);
+  assert.ok(brand.includes("data:image/png;base64,"));
+});
