@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { demoData, demoSelectors } from "../lib/demo-data.ts";
-import { runAgentTool } from "../lib/agent-tools.ts";
+import { inferDeterministicRead, runAgentTool } from "../lib/agent-tools.ts";
 
 test("portfolio has exactly 12 consortia and 348 uniquely-owned units", () => {
   assert.equal(demoData.consortia.length, 12);
@@ -74,6 +74,30 @@ test("agent tools expose exactly the canonical screen facts", () => {
   const unit = runAgentTool("UNIT_LOOKUP", { organization: "Arenales 2210", unit: "2A" }).data;
   assert.equal(unit.owner, "María Fernández");
   assert.equal(unit.outstanding, 540_000);
+});
+
+test("explicit organization plus unit routes to the unit domain generically", () => {
+  assert.deepEqual(
+    inferDeterministicRead("¿Quién corresponde a Arenales 2210 2A?", {}),
+    {
+      name: "UNIT_LOOKUP",
+      arguments: { organization: "Arenales 2210", unit: "2A" },
+    },
+  );
+  assert.deepEqual(
+    inferDeterministicRead("¿Y quién corresponde a esa unidad?", {
+      activeOrganization: "Arenales 2210",
+      activeUnit: "7C",
+    }),
+    {
+      name: "UNIT_LOOKUP",
+      arguments: { organization: "Arenales 2210", unit: "7C" },
+    },
+  );
+  assert.equal(
+    inferDeterministicRead("Buscame el pago de Arenales 2210 2A", {}),
+    null,
+  );
 });
 
 test("UI consumes selectors instead of contradictory legacy totals", async () => {
