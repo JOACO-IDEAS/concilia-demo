@@ -206,3 +206,26 @@ test("TASK V2.2 — import UI never hardcodes its own counts; reset restores the
     assert.equal(page.includes(banned), false, `truthfulness violation: found "${banned}"`);
   }
 });
+
+test("TASK V2.2B — processing polish groups real events into 3 stages, never a 4th invented one", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.ok(page.includes('label: "Lectura"'));
+  assert.ok(page.includes('label: "Análisis"'));
+  assert.ok(page.includes('label: "Conciliación"'));
+  assert.equal(page.includes('label: "Coincidencias"'), false);
+  // Los eventos de cada etapa siguen viniendo de demoSelectors.importSummary — ningún
+  // número nuevo, sólo la agrupación visual cambió.
+  assert.ok(page.includes("${summary.movements} movimientos detectados"));
+  assert.ok(page.includes("${summary.identified} identificados automáticamente"));
+  assert.ok(page.includes("${summary.requiresDecision} requiere"));
+  assert.ok(page.includes("${summary.requiresInformation} necesita"));
+  assert.ok(page.includes("Procesamiento simulado para esta demo."));
+});
+
+test("TASK V2.2B — stage progress never claims a real bank/OCR/AUTO integration", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const importSection = page.slice(page.indexOf("function ImportStatement"), page.indexOf("function Resolution({"));
+  for (const banned of ["AUTO", "integración bancaria", "conexión al banco", "OCR real"]) {
+    assert.equal(importSection.includes(banned), false, `overclaim risk: found "${banned}" in the import flow`);
+  }
+});

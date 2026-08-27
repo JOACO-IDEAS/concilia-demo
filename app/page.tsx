@@ -670,12 +670,51 @@ function Reconciliation({
 const IMPORT_STEP_DELAY_MS = 260;
 
 /**
- * "Importar extracto" — TASK V2.2. Es una demo: no procesa el archivo real
- * (no hay parser, no hay upload, no hay OCR ni OpenAI de por medio). Cualquier
- * archivo elegido o soltado dispara la MISMA secuencia simulada, cuyos
- * números salen exclusivamente de demoSelectors.importSummary/importPreview
- * (mismo dataset que ya usa Conciliación) — nunca un total independiente.
+ * "Importar extracto" — TASK V2.2 / V2.2B. Es una demo: no procesa el archivo
+ * real (no hay parser, no hay upload, no hay OCR ni OpenAI de por medio).
+ * Cualquier archivo elegido o soltado dispara la MISMA secuencia simulada,
+ * cuyos números salen exclusivamente de demoSelectors.importSummary/
+ * importPreview (mismo dataset que ya usa Conciliación) — nunca un total
+ * independiente.
+ *
+ * El procesamiento se agrupa en 3 etapas (LECTURA → ANÁLISIS →
+ * CONCILIACIÓN) en vez de una checklist plana de 5 ítems homogéneos —
+ * refuerzo visual pedido en V2.2B, mismos números, mismo timing total.
  */
+function importStages(summary: { movements: number; identified: number; requiresDecision: number; requiresInformation: number }) {
+  return [
+    {
+      key: "lectura",
+      label: "Lectura",
+      icon: "document" as IconName,
+      headline: "Leyendo el extracto bancario",
+      events: ["Archivo validado"],
+    },
+    {
+      key: "analisis",
+      label: "Análisis",
+      icon: "reconcile" as IconName,
+      headline: "ConcilIA analiza los movimientos",
+      events: [
+        `${summary.movements} movimientos detectados`,
+        "Clasificando transacciones",
+        "Buscando coincidencias con obligaciones",
+      ],
+    },
+    {
+      key: "conciliacion",
+      label: "Conciliación",
+      icon: "check" as IconName,
+      headline: "Preparando casos para revisión",
+      events: [
+        `${summary.identified} identificados automáticamente`,
+        `${summary.requiresDecision} requiere${summary.requiresDecision === 1 ? "" : "n"} tu revisión`,
+        `${summary.requiresInformation} necesita${summary.requiresInformation === 1 ? "" : "n"} más información`,
+      ],
+    },
+  ];
+}
+
 function ImportStatement({
   close,
   go,
@@ -691,24 +730,29 @@ function ImportStatement({
   const preview = demoSelectors.importPreview(resolved);
   const previewItems = [...preview.decisions, preview.needsInformation, ...preview.resolved];
 
-  const analysisSteps = [
-    "Archivo validado",
-    `${summary.movements} movimientos detectados`,
-    `${summary.identified} movimientos identificados`,
-    `${summary.requiresDecision} requieren revisión`,
-    `${summary.requiresInformation} necesitan información`,
-  ];
+  const stages = importStages(summary);
+  // Línea de tiempo plana: cada tick revela un evento real dentro de su etapa.
+  const timeline = stages.flatMap((stage, si) => stage.events.map((event, ei) => ({ si, ei, event })));
+  const stageEndsAt = stages.reduce<number[]>((acc, stage, si) => {
+    acc.push((acc[si - 1] ?? 0) + stage.events.length);
+    return acc;
+  }, []);
+  const firstUnfinishedStage = stageEndsAt.findIndex((end) => revealed < end);
+  const activeStageIndex = firstUnfinishedStage === -1 ? stages.length - 1 : firstUnfinishedStage;
+  const activeStage = stages[activeStageIndex];
+  const activeStageStart = activeStageIndex > 0 ? stageEndsAt[activeStageIndex - 1] : 0;
+  const activeStageRevealed = Math.max(0, Math.min(activeStage.events.length, revealed - activeStageStart));
 
   useEffect(() => {
     if (step !== "analyzing") return undefined;
     setRevealed(0);
-    const reveals = analysisSteps.map((_, i) =>
+    const reveals = timeline.map((_, i) =>
       window.setTimeout(() => setRevealed(i + 1), IMPORT_STEP_DELAY_MS * (i + 1)),
     );
     const finish = window.setTimeout(() => {
       trackShowroomEvent("import_completed");
       setStep("summary");
-    }, IMPORT_STEP_DELAY_MS * (analysisSteps.length + 1));
+    }, IMPORT_STEP_DELAY_MS * (timeline.length + 1));
     return () => {
       reveals.forEach(window.clearTimeout);
       window.clearTimeout(finish);
@@ -775,14 +819,34 @@ function ImportStatement({
 
         {step === "analyzing" && (
           <div className="import-body">
-            <div className="analysis-steps" aria-live="polite">
-              {analysisSteps.map((text, i) => (
-                <div key={text} className={i < revealed ? "done" : ""}>
-                  <span>{i < revealed ? <Icon name="check" size={13} /> : i + 1}</span>
-                  <p>{text}</p>
-                </div>
+            <div className="stage-row">
+              {stages.map((stage, si) => (
+                <span
+                  key={stage.key}
+                  className={si < activeStageIndex ? "done" : si === activeStageIndex ? "active" : ""}
+                >
+                  <Icon name={si < activeStageIndex ? "check" : stage.icon} size={14} />
+                  {stage.label}
+                </span>
               ))}
             </div>
+            <div className="stage-progress">
+              <em style={{ width: `${Math.round((revealed / timeline.length) * 100)}%` }} />
+            </div>
+            <div className="stage-detail" aria-live="polite">
+              <h3>{activeStage.headline}</h3>
+              <div className="analysis-steps">
+                {activeStage.events.map((text, i) => (
+                  <div key={text} className={i < activeStageRevealed ? "done" : ""}>
+                    <span>{i < activeStageRevealed ? <Icon name="check" size={13} /> : i + 1}</span>
+                    <p>{text}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <p className="import-disclaimer">
+              <Icon name="info" size={12} /> Procesamiento simulado para esta demo.
+            </p>
           </div>
         )}
 

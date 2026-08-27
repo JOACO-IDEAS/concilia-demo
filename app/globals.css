@@ -2356,6 +2356,61 @@ main {
   margin: 0;
   font-size: 11px;
 }
+/* TASK V2.2B — 3 etapas (Lectura → Análisis → Conciliación) en vez de una
+   checklist plana; mismos tokens de color que el resto del producto, sin
+   glow ni efectos "AI magic". */
+.stage-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.stage-row > span {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: #a7b0bf;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+.stage-row > span.active {
+  border-color: #a9bdea;
+  background: #f0f5ff;
+  color: var(--blue);
+}
+.stage-row > span.done {
+  border-color: #98b5a9;
+  background: var(--green-soft);
+  color: var(--green);
+}
+.stage-progress {
+  height: 4px;
+  border-radius: 4px;
+  background: #eef1f6;
+  overflow: hidden;
+  margin-bottom: 22px;
+}
+.stage-progress > em {
+  display: block;
+  height: 100%;
+  background: var(--blue);
+  border-radius: 4px;
+  transition: width 0.25s ease;
+}
+.stage-detail {
+  min-height: 148px;
+}
+.stage-detail h3 {
+  margin: 0 0 14px;
+  font-size: 14px;
+}
 .import-summary-strip {
   display: flex;
   margin-bottom: 14px;
