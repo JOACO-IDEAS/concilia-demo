@@ -197,6 +197,7 @@ export default function ProductDemo() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [doc, setDoc] = useState<(typeof documents)[number] | null>(null);
   const [selectedOrganization, setSelectedOrganization] = useState("Arenales 2210");
+  const [importOpen, setImportOpen] = useState(false);
   useEffect(() => {
     const engaged = window.setTimeout(() => trackShowroomEvent("engagement_30s"), 30_000);
     return () => window.clearTimeout(engaged);
@@ -225,6 +226,7 @@ export default function ProductDemo() {
     setNotifications(false);
     setSearchOpen(false);
     setSelectedOrganization("Arenales 2210");
+    setImportOpen(false);
     setView("home");
     notify("Demo reiniciada · estado inicial restaurado");
   };
@@ -369,6 +371,11 @@ export default function ProductDemo() {
                   <Icon name="agent" size={16} /> Preguntarle al Agente
                 </button>
               )}
+              {view === "reconciliation" && (
+                <button className="primary" onClick={() => { trackShowroomEvent("import_opened"); setImportOpen(true); }}>
+                  <Icon name="upload" size={16} /> Importar extracto
+                </button>
+              )}
             </div>
           )}
           {view === "home" && <Home resolved={resolved} go={go} />}
@@ -397,6 +404,13 @@ export default function ProductDemo() {
         />
       )}
       {doc && <DocumentPreview doc={doc} close={() => setDoc(null)} />}
+      {importOpen && (
+        <ImportStatement
+          close={() => setImportOpen(false)}
+          go={go}
+          resolved={resolved}
+        />
+      )}
       {toast && (
         <div className="toast">
           <span>
@@ -649,6 +663,186 @@ function Reconciliation({
         </span>
         <Icon name="arrow" />
       </button>
+    </div>
+  );
+}
+
+const IMPORT_STEP_DELAY_MS = 260;
+
+/**
+ * "Importar extracto" — TASK V2.2. Es una demo: no procesa el archivo real
+ * (no hay parser, no hay upload, no hay OCR ni OpenAI de por medio). Cualquier
+ * archivo elegido o soltado dispara la MISMA secuencia simulada, cuyos
+ * números salen exclusivamente de demoSelectors.importSummary/importPreview
+ * (mismo dataset que ya usa Conciliación) — nunca un total independiente.
+ */
+function ImportStatement({
+  close,
+  go,
+  resolved,
+}: {
+  close: () => void;
+  go: (v: View) => void;
+  resolved: boolean;
+}) {
+  const [step, setStep] = useState<"select" | "analyzing" | "summary">("select");
+  const [revealed, setRevealed] = useState(0);
+  const summary = demoSelectors.importSummary(resolved);
+  const preview = demoSelectors.importPreview(resolved);
+  const previewItems = [...preview.decisions, preview.needsInformation, ...preview.resolved];
+
+  const analysisSteps = [
+    "Archivo validado",
+    `${summary.movements} movimientos detectados`,
+    `${summary.identified} movimientos identificados`,
+    `${summary.requiresDecision} requieren revisión`,
+    `${summary.requiresInformation} necesitan información`,
+  ];
+
+  useEffect(() => {
+    if (step !== "analyzing") return undefined;
+    setRevealed(0);
+    const reveals = analysisSteps.map((_, i) =>
+      window.setTimeout(() => setRevealed(i + 1), IMPORT_STEP_DELAY_MS * (i + 1)),
+    );
+    const finish = window.setTimeout(() => {
+      trackShowroomEvent("import_completed");
+      setStep("summary");
+    }, IMPORT_STEP_DELAY_MS * (analysisSteps.length + 1));
+    return () => {
+      reveals.forEach(window.clearTimeout);
+      window.clearTimeout(finish);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+
+  const onFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    trackShowroomEvent("import_started");
+    setStep("analyzing");
+  };
+
+  const titles: Record<typeof step, string> = {
+    select: "Importá el extracto bancario",
+    analyzing: "Analizando extracto…",
+    summary: "Extracto organizado",
+  };
+
+  return (
+    <div className="modal-overlay" onClick={step === "select" ? close : undefined}>
+      <div className="import-modal" onClick={(e) => e.stopPropagation()}>
+        <header>
+          <div>
+            <p>IMPORTAR EXTRACTO</p>
+            <h2>{titles[step]}</h2>
+          </div>
+          <button onClick={close} aria-label="Cerrar">
+            <Icon name="close" />
+          </button>
+        </header>
+
+        {step === "select" && (
+          <div className="import-body">
+            <label
+              className="dropzone"
+              htmlFor="statement-file"
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                onFiles(e.dataTransfer.files);
+              }}
+            >
+              <Icon name="upload" size={26} />
+              <b>Arrastrá tu extracto acá o hacé clic para elegir un archivo</b>
+              <span>PDF, CSV o Excel de tu banco</span>
+              <div className="file-types">
+                <span>PDF</span>
+                <span>CSV</span>
+                <span>XLS/XLSX</span>
+              </div>
+              <input
+                id="statement-file"
+                type="file"
+                accept=".pdf,.csv,.xls,.xlsx"
+                onChange={(e) => onFiles(e.target.files)}
+              />
+            </label>
+            <p className="import-disclaimer">
+              <Icon name="info" size={12} /> En esta demo se utiliza un extracto simulado.
+            </p>
+          </div>
+        )}
+
+        {step === "analyzing" && (
+          <div className="import-body">
+            <div className="analysis-steps" aria-live="polite">
+              {analysisSteps.map((text, i) => (
+                <div key={text} className={i < revealed ? "done" : ""}>
+                  <span>{i < revealed ? <Icon name="check" size={13} /> : i + 1}</span>
+                  <p>{text}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {step === "summary" && (
+          <div className="import-body">
+            <div className="import-summary-strip">
+              <span>
+                <b>{summary.movements}</b>
+                <small>movimientos procesados</small>
+              </span>
+              <span>
+                <b>{summary.identified}</b>
+                <small>identificados</small>
+              </span>
+              <span className="attention">
+                <b>{summary.requiresDecision}</b>
+                <small>requieren revisión</small>
+              </span>
+              <span>
+                <b>{summary.requiresInformation}</b>
+                <small>necesitan información</small>
+              </span>
+              <span>
+                <b>{formatMoney(summary.totalAmount)}</b>
+                <small>importe procesado</small>
+              </span>
+            </div>
+            <p className="import-lead">
+              ConcilIA organizó el extracto y separó únicamente los casos que necesitan tu criterio.
+            </p>
+            <div className="import-preview">
+              {previewItems.map((item) => (
+                <article key={item.id}>
+                  <Status tone={item.tone}>{item.status}</Status>
+                  <b>{formatMoney(item.amount)}</b>
+                  <span>
+                    {item.place || "Sin consorcio"} · {item.unitLabel}
+                  </span>
+                </article>
+              ))}
+            </div>
+            <footer className="import-footer">
+              <button className="secondary" onClick={close}>
+                Cerrar
+              </button>
+              <button
+                className="primary"
+                onClick={() => {
+                  trackShowroomEvent("primary_click", { target: "import_review" });
+                  close();
+                  go("reconciliation");
+                }}
+              >
+                Revisar {summary.requiresDecision} casos
+                <Icon name="arrow" size={15} />
+              </button>
+            </footer>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

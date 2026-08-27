@@ -159,3 +159,50 @@ test("official wordmark replaces the legacy isotipo without recreating the logo"
   assert.equal(styles.includes(".brand-symbol"), false);
   assert.ok(brand.includes("data:image/png;base64,"));
 });
+
+test("TASK V2.2 — import classification sums exactly to total movements, never a contradictory count", () => {
+  const summary = demoSelectors.importSummary();
+  assert.equal(summary.movements, demoData.reconciliation.movements);
+  assert.equal(summary.totalAmount, demoData.reconciliation.totalAmount);
+  assert.equal(
+    summary.identified + summary.requiresDecision + summary.requiresInformation,
+    summary.movements,
+  );
+  assert.equal(summary.requiresDecision, demoSelectors.decisionCases(false).length);
+  assert.equal(summary.requiresInformation, demoData.reconciliation.informationCases.length);
+});
+
+test("TASK V2.2 — import summary stays consistent with the reconciliation queue once the demo payment is confirmed", () => {
+  const before = demoSelectors.importSummary(false);
+  const after = demoSelectors.importSummary(true);
+  assert.equal(after.requiresDecision, before.requiresDecision - 1);
+  assert.equal(after.identified, before.identified + 1);
+  assert.equal(
+    after.identified + after.requiresDecision + after.requiresInformation,
+    after.movements,
+  );
+  assert.equal(after.requiresDecision, demoSelectors.decisionCases(true).length);
+});
+
+test("TASK V2.2 — import preview only reuses real cases already present in the canonical dataset", () => {
+  const preview = demoSelectors.importPreview(false);
+  const decisionIds = new Set(demoData.reconciliation.decisionCases.map((item) => item.id));
+  const informationIds = new Set(demoData.reconciliation.informationCases.map((item) => item.id));
+  const resolvedIds = new Set(demoData.reconciliation.resolvedPayments.map((item) => item.id));
+  for (const item of preview.decisions) assert.ok(decisionIds.has(item.id));
+  assert.ok(informationIds.has(preview.needsInformation.id));
+  for (const item of preview.resolved) assert.ok(resolvedIds.has(item.id));
+});
+
+test("TASK V2.2 — import UI never hardcodes its own counts; reset restores the import overlay to closed", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.ok(page.includes("demoSelectors.importSummary(resolved)"));
+  assert.ok(page.includes("demoSelectors.importPreview(resolved)"));
+  assert.ok(page.includes("setImportOpen(false)"));
+  const resetBody = page.slice(page.indexOf("const resetDemo = ()"), page.indexOf("const titles: Record<View"));
+  assert.ok(resetBody.includes("setImportOpen(false)"), "resetDemo must close the import overlay");
+  assert.equal(page.includes("En esta demo se utiliza un extracto simulado."), true);
+  for (const banned of ["parseFile(", "OPENAI_API_KEY", "fetch(\"/api/statement", "uploadFile(", "runOcr", "callOpenAI"]) {
+    assert.equal(page.includes(banned), false, `truthfulness violation: found "${banned}"`);
+  }
+});

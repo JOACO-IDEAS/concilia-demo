@@ -2215,6 +2215,216 @@ main {
   justify-content: space-between;
   align-items: center;
 }
+/* TASK V2.2 — Importar extracto */
+.import-modal {
+  width: min(620px, calc(100vw - 30px));
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 25px 70px rgba(12, 21, 37, 0.25);
+  overflow: hidden;
+}
+.import-modal header {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.import-modal header p {
+  margin: 0;
+  color: #8b95a6;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.import-modal h2 {
+  margin: 5px 0 0;
+  font-size: 16px;
+}
+.import-modal header button {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 4px;
+}
+.import-modal header button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.import-body {
+  padding: 22px;
+}
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 34px 20px;
+  border: 1.5px dashed #c3cee2;
+  border-radius: 10px;
+  background: #f8faff;
+  color: var(--blue);
+  text-align: center;
+  cursor: pointer;
+}
+.dropzone:hover {
+  background: #f0f5ff;
+  border-color: #a9bdea;
+}
+.dropzone > b {
+  font-size: 12px;
+  color: var(--ink);
+  max-width: 320px;
+}
+.dropzone > span {
+  font-size: 9px;
+  color: var(--muted);
+}
+.dropzone .file-types {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.dropzone .file-types span {
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: #fff;
+  border: 1px solid var(--line);
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.dropzone input {
+  /* Oculto visualmente pero accesible: el <label> es el control real de
+     teclado/lector de pantalla, no un div con aria-* simulado. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.dropzone:focus-within {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.import-disclaimer {
+  margin: 12px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  color: var(--muted);
+}
+.analysis-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 6px 0;
+}
+.analysis-steps > div {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 10px;
+  align-items: center;
+  color: var(--muted);
+  transition: color 0.2s ease;
+}
+.analysis-steps > div.done {
+  color: var(--ink);
+}
+.analysis-steps > div > span {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #eef1f6;
+  color: #8b95a6;
+  font-size: 9px;
+  font-weight: 700;
+}
+.analysis-steps > div.done > span {
+  background: var(--green-soft);
+  color: var(--green);
+}
+.analysis-steps p {
+  margin: 0;
+  font-size: 11px;
+}
+.import-summary-strip {
+  display: flex;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.import-summary-strip span {
+  flex: 1;
+  padding: 12px 10px;
+  border-right: 1px solid var(--line);
+  text-align: center;
+}
+.import-summary-strip span:last-child {
+  border: 0;
+}
+.import-summary-strip b,
+.import-summary-strip small {
+  display: block;
+}
+.import-summary-strip b {
+  font-size: 17px;
+}
+.import-summary-strip small {
+  font-size: 8px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+.import-summary-strip .attention b {
+  color: var(--amber);
+}
+.import-lead {
+  margin: 0 0 14px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.import-preview {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.import-preview article {
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fafbfc;
+}
+.import-preview article > b {
+  display: block;
+  margin: 6px 0 3px;
+  font-size: 13px;
+}
+.import-preview article > span {
+  font-size: 9px;
+  color: var(--muted);
+}
+.import-footer {
+  padding: 14px 18px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+@media (max-width: 640px) {
+  .import-preview {
+    grid-template-columns: 1fr;
+  }
+}
 .toast {
   position: fixed;
   right: 25px;

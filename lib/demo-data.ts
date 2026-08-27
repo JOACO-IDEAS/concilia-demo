@@ -128,6 +128,26 @@ export const demoSelectors = {
   activity: (resolved = false) => resolved ? [{ time: "Ahora", event: "Conciliación confirmada", meta: `$${demoData.reconciliation.featuredPayment.amount.toLocaleString("es-AR")} · Arenales 2210 · 2A` }, ...demoData.activity] : demoData.activity,
   averageCollectionRate: () => Math.round(demoData.consortia.reduce((sum, item) => sum + item.collectionRate, 0) / demoData.consortia.length),
   unit: (consortium: string, unit: string) => demoData.units.find((item) => item.consortium === consortium && item.unit === unit),
+  // TASK V2.2 — clasificación derivada exclusivamente de reconciliation.*: nunca un
+  // total independiente. `identified` se calcula, nunca se hardcodea, así que
+  // identified + requiresDecision + requiresInformation === movements por construcción.
+  // `resolved` es el mismo flag que ya usa decisionCases/attentionCases — si el
+  // administrador ya confirmó el pago destacado, este resumen lo refleja igual
+  // que el badge del sidebar, para que nunca queden dos números distintos
+  // (import vs. cola real) sobre el mismo caso.
+  importSummary: (resolved = false) => {
+    const { movements, totalAmount, informationCases } = demoData.reconciliation;
+    const requiresDecision = demoSelectors.decisionCases(resolved).length;
+    const requiresInformation = informationCases.length;
+    return { movements, totalAmount, identified: movements - requiresDecision - requiresInformation, requiresDecision, requiresInformation };
+  },
+  // Casos reales reutilizados tal cual del dataset canónico — ningún movimiento
+  // sintético nuevo se crea para esta pantalla.
+  importPreview: (resolved = false) => ({
+    decisions: demoSelectors.decisionCases(resolved).slice(0, 2),
+    needsInformation: demoData.reconciliation.informationCases[0],
+    resolved: demoData.reconciliation.resolvedPayments.slice(0, 1),
+  }),
 };
 
 export const demoContext = JSON.stringify(demoData);
