@@ -1642,6 +1642,31 @@ main {
   font-size: 8px;
   color: var(--muted);
 }
+/* TASK V2.4 — señales coincidentes en el flujo de comprobante */
+.signal-match {
+  grid-column: 1/-1;
+}
+.signal-match > p {
+  margin: 0 0 8px;
+  color: #8b95a6;
+  font-size: 8px;
+  font-weight: 700;
+}
+.signal-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.signal-chips > span {
+  padding: 6px 10px;
+  border-radius: 7px;
+  background: var(--green-soft);
+  color: var(--green);
+  font-size: 9px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
 .page.agent {
   max-width: none;
   padding: 0;

@@ -110,7 +110,7 @@ export const demoData = {
   intelligence: { humanInterventionMonth1: 23, humanInterventionCurrent: 9, resolvedWithoutIntervention: 91, recognizedUsingHistory: 14, estimatedHoursSaved: 18.4, learnedRelations: 428, interventionCauses: ["Identidad nueva", "Ambigüedad", "Información insuficiente", "Historial contradictorio"] },
   activity: [
     { time: "10:48", event: "Pago conciliado", meta: "$98.400 · Libertad 1280 · 4B" },
-    { time: "10:35", event: "Comprobante vinculado", meta: "WhatsApp · Santa Fe 1842" },
+    { time: "10:35", event: "Comprobante vinculado", meta: "WhatsApp simulado · Santa Fe 1842" },
     { time: "10:12", event: "Pago identificado mediante historial", meta: "$172.000 · Paraguay 1450 · 6A" },
     { time: "09:44", event: "Mora actualizada", meta: "Arenales 2210 · 27 unidades" },
   ],

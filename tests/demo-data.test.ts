@@ -255,3 +255,45 @@ test("TASK V2.3 — Morosidad 'Mayor importe' filter actually reorders by outsta
   assert.notDeepEqual(overdue.map((u) => u.id), sorted.map((u) => u.id), "fixture should not already be sorted by amount, otherwise this test can't detect a no-op filter");
   assert.equal(sorted[0].outstanding, Math.max(...overdue.map((u) => u.outstanding)));
 });
+
+test("TASK V2.4 — the WhatsApp receipt case is fully consistent across the canonical dataset", () => {
+  const { featuredPayment } = demoData.reconciliation;
+  const example = demoData.communications.examples[0];
+  const profile = demoData.unitProfiles.find((p) => p.consortium === "Arenales 2210" && p.unit === "2A");
+  assert.equal(featuredPayment.place, "Arenales 2210");
+  assert.equal(featuredPayment.unitLabel, "Unidad 2A");
+  assert.equal(example.context, "Arenales 2210 · 2A");
+  assert.equal(example.from, profile?.owner, "the WhatsApp sender must be the real registered owner of Arenales 2210 · 2A");
+  assert.ok(example.detected.includes(featuredPayment.amount.toLocaleString("es-AR")), "the amount detected from the message must match the featured payment, not an invented one");
+  assert.equal(example.signal, featuredPayment.signal);
+});
+
+test("TASK V2.4 — EvidenceFlow reuses the canonical WhatsApp message instead of a second hardcoded copy", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const evidenceSection = page.slice(page.indexOf("function EvidenceFlow("), page.indexOf("type ChatMessage"));
+  assert.ok(evidenceSection.includes("demoData.communications.examples[0].message"), "the chat bubble must read the message from the dataset, not a separate literal string");
+  assert.equal(evidenceSection.includes("Hola, pago expensas 2A."), false, "the old duplicated hardcoded message must be gone");
+  assert.ok(evidenceSection.includes("featuredPayment.candidates[0].evidence"), "matching signals must come from the real candidate evidence array, not invented copy");
+});
+
+test("TASK V2.4 — truthfulness: no real WhatsApp/Meta/OCR/banking integration is ever claimed", async () => {
+  const [page, css] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+  for (const banned of ["Meta Cloud API", "WhatsApp Business API", "whatsapp.com/api", "Twilio", "webhook", "fetch(\"https://graph.facebook.com", "runOcr(", "parseReceipt("]) {
+    assert.equal(page.includes(banned), false, `overclaim risk: found "${banned}" in page.tsx`);
+    assert.equal(css.includes(banned), false, `overclaim risk: found "${banned}" in globals.css`);
+  }
+  assert.ok(page.includes("WhatsApp · Demostración"), "the phone mockup must carry an unambiguous demo disclaimer");
+  assert.ok(page.includes("WhatsApp · Demostración · 18 ago"), "the Resolution receipt card must carry the same demo disclaimer");
+});
+
+test("TASK V2.4 — confidence language stays honest: no invented score, no false certainty", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const evidenceSection = page.slice(page.indexOf("function EvidenceFlow("), page.indexOf("type ChatMessage"));
+  for (const banned of ["% IA", "99%", "confidence:", "confidenceScore"]) {
+    assert.equal(evidenceSection.includes(banned), false, `invented-confidence risk: found "${banned}"`);
+  }
+  assert.ok(evidenceSection.includes("Requiere confirmación"), "the flow must keep stating that human confirmation is still required");
+});

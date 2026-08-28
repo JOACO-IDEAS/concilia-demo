@@ -1088,7 +1088,7 @@ function Receipt() {
         </span>
         <p>
           <b>Comprobante recibido</b>
-          <small>WhatsApp · 18 ago · 10:49</small>
+          <small>WhatsApp · Demostración · 18 ago · 10:49</small>
         </p>
         <Status tone="success">Datos detectados</Status>
       </div>
@@ -1527,10 +1527,11 @@ function EvidenceFlow({ go }: { go: (v: View) => void }) {
       <section className="flow-card card">
         <div className="phone-demo">
           <div className="phone-head">
-            <Icon name="whatsapp" /> María Fernández <small>Unidad 2A</small>
+            <Icon name="whatsapp" /> WhatsApp · Demostración
+            <small>{demoData.communications.examples[0].from} · Unidad 2A</small>
           </div>
           <div className="chat-bubble">
-            Hola, pago expensas 2A.
+            {demoData.communications.examples[0].message}
             <span className="file-chip">
               <Icon name="document" size={15} /> comprobante_{featuredSignalSuffix}.pdf
             </span>
@@ -1549,6 +1550,17 @@ function EvidenceFlow({ go }: { go: (v: View) => void }) {
             </div>
           ))}
         </div>
+        <div className="signal-match">
+          <p>SEÑALES COINCIDENTES</p>
+          <div className="signal-chips">
+            {featuredPayment.candidates[0].evidence.map((signal) => (
+              <span key={signal}>
+                <Icon name="check" size={12} />
+                {signal}
+              </span>
+            ))}
+          </div>
+        </div>
         <div className="evidence-summary">
           <div>
             <p>COMPROBANTE #{featuredSignalSuffix}</p>
@@ -1561,7 +1573,7 @@ function EvidenceFlow({ go }: { go: (v: View) => void }) {
             <span>{featuredPayment.bank} · {formatMovementDate(featuredPayment.receivedAt)}</span>
           </div>
           <button className="primary" onClick={() => go("resolution")}>
-            Ver relación
+            Revisar coincidencia
             <Icon name="arrow" size={15} />
           </button>
         </div>
