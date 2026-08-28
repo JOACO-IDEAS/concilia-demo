@@ -297,3 +297,83 @@ test("TASK V2.4 — confidence language stays honest: no invented score, no fals
   }
   assert.ok(evidenceSection.includes("Requiere confirmación"), "the flow must keep stating that human confirmation is still required");
 });
+
+test("TASK V2.4.1 — Codex #1: 'identificados' is one single number for the same 184-movement batch", () => {
+  const { movements, resolved, requiresDecision, requiresInformation } = demoData.reconciliation;
+  // El mismo concepto ("identificados") no puede tener dos respuestas distintas
+  // para el mismo universo de movimientos, ni antes ni después de confirmar.
+  assert.equal(resolved + requiresDecision + requiresInformation, movements);
+  assert.equal(resolved, demoSelectors.importSummary(false).identified);
+  assert.equal(resolved + 1, demoSelectors.importSummary(true).identified);
+  // straightThroughRate debe derivarse del mismo resolved/movements, no ser un número
+  // independiente que ya no corresponda a decisionCases/informationCases reales.
+  assert.equal(demoData.reconciliation.straightThroughRate, Math.round((resolved / movements) * 1000) / 10);
+});
+
+test("TASK V2.4.1 — Codex #2: 'Elegir otra unidad' only ever offers real featuredPayment candidates", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const resolutionSection = page.slice(page.indexOf("function Resolution("), page.indexOf("function Receipt("));
+  assert.equal(resolutionSection.includes("Santa Fe"), false, "the alternative picker must never show a consortium the payment isn't actually a candidate for");
+  assert.ok(resolutionSection.includes("featuredPayment.candidates.map"), "the picker must be generated from the real candidates array, not a hardcoded list");
+  assert.ok(resolutionSection.includes("confirm(pendingUnit)"), "confirming an alternative must pass the actually-selected unit, not a hardcoded one");
+  assert.equal(resolutionSection.includes("onClick={confirm}"), false, "confirm must always receive the chosen unit as an argument");
+});
+
+test("TASK V2.4.1 — Codex #4: Resolution Workspace evidence matches the canonical candidate evidence array", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const resolutionSection = page.slice(page.indexOf("function Resolution("), page.indexOf("function Receipt("));
+  assert.ok(resolutionSection.includes("featuredPayment.candidates[0].evidence.map"));
+  for (const banned of ["Fecha compatible", "Referencia compatible"]) {
+    assert.equal(resolutionSection.includes(banned), false, `non-canonical evidence found: "${banned}" is not in featuredPayment.candidates[0].evidence`);
+  }
+  const evidenceSection = page.slice(page.indexOf("function EvidenceFlow("), page.indexOf("type ChatMessage"));
+  assert.ok(evidenceSection.includes("featuredPayment.candidates[0].evidence.map"), "EvidenceFlow and Resolution must render the same canonical evidence array, not two independent copies");
+});
+
+test("TASK V2.4.1 — Codex #3/#5: post-confirm surfaces derive live from decisionCases(resolved), never a raw/static count", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const consortiumSection = page.slice(page.indexOf("function Consortium("), page.indexOf("function Documents("));
+  assert.equal(consortiumSection.includes("demoData.reconciliation.decisionCases.filter"), false, "Consortium must never read the raw unfiltered decisionCases array");
+  assert.ok(consortiumSection.includes("demoSelectors.decisionCases(resolved)"), "Consortium's open-case counts must react to resolved");
+  assert.equal(consortiumSection.includes("{organization.pending} situaciones"), false, "the open-situations badge must not be bound to the static debt-unit count");
+
+  const searchSection = page.slice(page.indexOf("function GlobalSearch("), page.indexOf("function Notifications("));
+  assert.ok(searchSection.includes("resolved ? \"reconciliation\" : \"resolution\""), "search must not let an already-resolved payment reopen the confirm workflow");
+  assert.ok(searchSection.includes("resolvedUnit"), "search must reflect which unit was actually confirmed");
+
+  const evidenceFlowSection = page.slice(page.indexOf("function EvidenceFlow("), page.indexOf("type ChatMessage"));
+  assert.ok(evidenceFlowSection.includes("resolved ? \"reconciliation\" : \"resolution\""), "EvidenceFlow's CTA must not offer to reopen a confirmed case as pending");
+
+  const resolutionSection = page.slice(page.indexOf("function Resolution("), page.indexOf("function Receipt("));
+  assert.ok(resolutionSection.includes("if (resolved)"), "Resolution must refuse to show the confirm form again once already resolved");
+});
+
+test("TASK V2.4.1 — Codex #5: every Reconciliación table row is a real control, never a decorative label", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const reconciliationSection = page.slice(page.indexOf("function Reconciliation("), page.indexOf("function MovementDetail("));
+  assert.equal(reconciliationSection.includes(": undefined"), false, "no table row may resolve its onClick to a no-op");
+  assert.ok(reconciliationSection.includes("setDetail(x)"), "rows other than the resolvable one must open a real detail panel");
+
+  const agentSection = page.slice(page.indexOf("function Agent("), page.indexOf("function AgentResult("));
+  assert.ok(/<button onClick=\{\(\) => \{ setMessages\(\[\]\); setConversationState\(\{\}\); send\("¿Qué pagos necesitan revisión\?"\); \}\}>/.test(agentSection), "the 'Conciliaciones' history shortcut must actually query the Agent");
+  assert.ok(/send\("¿Dónde tengo mayor mora\?"\)/.test(agentSection), "the 'Morosidad' history shortcut must actually query the Agent");
+});
+
+test("TASK V2.4.1 — Codex #6: WhatsApp notification is frame-safe on its own, without relying on the global badge", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.equal(page.includes("WhatsApp · ahora"), false, "the old ambiguous notification copy must be gone");
+  assert.ok(page.includes("WhatsApp simulado · ahora"));
+});
+
+test("TASK V2.4.1 — Codex #7: the primary import CTA is never display:none on mobile", async () => {
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const mobileBlock = css.slice(css.indexOf("@media (max-width: 760px)"), css.indexOf("@media (max-width: 760px)") + 2000);
+  assert.equal(/\.page-head \.primary\s*\{\s*display:\s*none/.test(mobileBlock), false, "Importar extracto must stay visible and tappable at mobile widths");
+});
+
+test("TASK V2.4.1 — reset restores resolvedUnit to the default candidate alongside resolved", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const resetBody = page.slice(page.indexOf("const resetDemo = ()"), page.indexOf("const titles: Record<View"));
+  assert.ok(resetBody.includes("setResolvedUnit(featuredPayment.candidates[0].unit)"), "reset must restore the default candidate, not leave a previous session's chosen unit behind");
+  assert.ok(resetBody.includes("setResolved(false)"));
+});

@@ -198,6 +198,7 @@ export default function ProductDemo() {
   const [doc, setDoc] = useState<(typeof documents)[number] | null>(null);
   const [selectedOrganization, setSelectedOrganization] = useState("Arenales 2210");
   const [importOpen, setImportOpen] = useState(false);
+  const [resolvedUnit, setResolvedUnit] = useState(featuredPayment.candidates[0].unit);
   useEffect(() => {
     const engaged = window.setTimeout(() => trackShowroomEvent("engagement_30s"), 30_000);
     return () => window.clearTimeout(engaged);
@@ -214,7 +215,8 @@ export default function ProductDemo() {
     setToast(text);
     window.setTimeout(() => setToast(null), 2600);
   };
-  const confirm = () => {
+  const confirm = (unit: string) => {
+    setResolvedUnit(unit);
     setResolved(true);
     notify("Conciliación confirmada · el historial fue actualizado");
     window.setTimeout(() => go("home"), 700);
@@ -222,6 +224,7 @@ export default function ProductDemo() {
   const resetDemo = () => {
     trackShowroomEvent("demo_reset");
     setResolved(false);
+    setResolvedUnit(featuredPayment.candidates[0].unit);
     setDoc(null);
     setNotifications(false);
     setSearchOpen(false);
@@ -380,14 +383,14 @@ export default function ProductDemo() {
           )}
           {view === "home" && <Home resolved={resolved} go={go} />}
           {view === "reconciliation" && (
-            <Reconciliation resolved={resolved} go={go} />
+            <Reconciliation resolved={resolved} resolvedUnit={resolvedUnit} go={go} />
           )}
-          {view === "resolution" && <Resolution confirm={confirm} go={go} />}
+          {view === "resolution" && <Resolution resolved={resolved} resolvedUnit={resolvedUnit} confirm={confirm} go={go} />}
           {view === "debt" && <Debt />}
           {view === "consortia" && <Consortia go={go} select={(name) => { setSelectedOrganization(name); go("consortium"); }} />}
-          {view === "consortium" && <Consortium go={go} organizationName={selectedOrganization} />}
+          {view === "consortium" && <Consortium go={go} organizationName={selectedOrganization} resolved={resolved} />}
           {view === "documents" && <Documents open={setDoc} />}
-          {view === "evidence" && <EvidenceFlow go={go} />}
+          {view === "evidence" && <EvidenceFlow go={go} resolved={resolved} />}
           {view === "agent" && <Agent go={go} />}
           {view === "settings" && <Settings />}
         </section>
@@ -396,6 +399,8 @@ export default function ProductDemo() {
         <GlobalSearch
           close={() => setSearchOpen(false)}
           go={go}
+          resolved={resolved}
+          resolvedUnit={resolvedUnit}
           openDoc={(d) => {
             setDoc(d);
             setSearchOpen(false);
@@ -563,16 +568,19 @@ function Home({ resolved, go }: { resolved: boolean; go: (v: View) => void }) {
 
 function Reconciliation({
   resolved,
+  resolvedUnit,
   go,
 }: {
   resolved: boolean;
+  resolvedUnit: string;
   go: (v: View) => void;
 }) {
   const [tab, setTab] = useState("Requieren atención");
+  const [detail, setDetail] = useState<{ amount: string; date: string; place: string; unit: string; status: string; tone: string } | null>(null);
   const rows = demoSelectors.attentionCases(resolved).map((item) => ({ id: item.id, amount: formatMoney(item.amount), date: formatMovementDate(item.receivedAt), place: item.place || "Sin consorcio", unit: item.unitLabel, status: item.status, tone: item.tone, action: item.id === demoData.reconciliation.featuredPayment.id ? "Revisar" : item.place ? "Resolver" : "Ver caso" }));
   const resolvedRows = [
     ...demoData.reconciliation.resolvedPayments.map((item) => ({ id: item.id, amount: formatMoney(item.amount), date: formatMovementDate(item.receivedAt), place: item.place, unit: item.unitLabel, status: item.status, tone: item.tone })),
-    ...(resolved ? [{ id: demoData.reconciliation.featuredPayment.id, amount: formatMoney(demoData.reconciliation.featuredPayment.amount), date: "Ahora", place: demoData.reconciliation.featuredPayment.place, unit: demoData.reconciliation.featuredPayment.unitLabel, status: "Confirmado", tone: "success" }] : []),
+    ...(resolved ? [{ id: demoData.reconciliation.featuredPayment.id, amount: formatMoney(demoData.reconciliation.featuredPayment.amount), date: "Ahora", place: demoData.reconciliation.featuredPayment.place, unit: `Unidad ${resolvedUnit}`, status: "Confirmado", tone: "success" }] : []),
   ];
   const data =
     tab === "Resueltos"
@@ -628,7 +636,7 @@ function Reconciliation({
             onClick={() =>
               x.id === featuredPayment.id && !resolved
                 ? go("resolution")
-                : undefined
+                : setDetail(x)
             }
           >
             <span>
@@ -663,6 +671,52 @@ function Reconciliation({
         </span>
         <Icon name="arrow" />
       </button>
+      {detail && <MovementDetail item={detail} close={() => setDetail(null)} />}
+    </div>
+  );
+}
+
+function MovementDetail({
+  item,
+  close,
+}: {
+  item: { amount: string; date: string; place: string; unit: string; status: string; tone: string };
+  close: () => void;
+}) {
+  return (
+    <div className="modal-overlay" onClick={close}>
+      <div className="debt-modal" onClick={(e) => e.stopPropagation()}>
+        <header>
+          <div>
+            <p>MOVIMIENTO · {item.place.toUpperCase()}</p>
+            <h2>{item.amount}</h2>
+          </div>
+          <button onClick={close} aria-label="Cerrar">
+            <Icon name="close" />
+          </button>
+        </header>
+        <div className="debt-detail-body">
+          <div className="debt-detail-top">
+            <strong>{item.unit}</strong>
+            <Status tone={item.tone}>{item.status}</Status>
+          </div>
+          <dl>
+            <div>
+              <dt>Consorcio</dt>
+              <dd>{item.place}</dd>
+            </div>
+            <div>
+              <dt>Fecha</dt>
+              <dd>{item.date}</dd>
+            </div>
+          </dl>
+        </div>
+        <footer>
+          <button className="secondary" onClick={close}>
+            Cerrar
+          </button>
+        </footer>
+      </div>
     </div>
   );
 }
@@ -911,21 +965,45 @@ function ImportStatement({
   );
 }
 
+const EVIDENCE_DESCRIPTIONS: Record<string, string> = {
+  "Importe compatible": `La obligación de agosto es de ${featuredAmount}`,
+  "Obligación pendiente": "La unidad todavía tiene la obligación del período sin conciliar",
+  "Tres confirmaciones anteriores": "Este pagador ya confirmó 3 pagos anteriores para esta unidad",
+  "Sin historial suficiente": "Todavía no hay antecedentes confirmados para esta unidad",
+};
+
 function Resolution({
+  resolved,
+  resolvedUnit,
   confirm,
   go,
 }: {
-  confirm: () => void;
+  resolved: boolean;
+  resolvedUnit: string;
+  confirm: (unit: string) => void;
   go: (v: View) => void;
 }) {
   const [other, setOther] = useState(false);
   const [rejected, setRejected] = useState(false);
+  const [pendingUnit, setPendingUnit] = useState(
+    featuredPayment.candidates.find((c) => c.unit !== featuredPayment.candidates[0].unit)?.unit ?? featuredPayment.candidates[0].unit,
+  );
   if (rejected)
     return (
       <StatePanel
         icon="alert"
         title="Propuesta rechazada"
         text="El caso volvió a Requiere información. ConcilIA no ejecutó ninguna conciliación."
+        action="Volver a conciliación"
+        onClick={() => go("reconciliation")}
+      />
+    );
+  if (resolved)
+    return (
+      <StatePanel
+        icon="check"
+        title="Conciliación ya confirmada"
+        text={`Este pago quedó conciliado con ${featuredPayment.candidates[0].consortium} · Unidad ${resolvedUnit}. No hace falta volver a confirmarlo.`}
         action="Volver a conciliación"
         onClick={() => go("reconciliation")}
       />
@@ -968,27 +1046,14 @@ function Resolution({
               title="Evidencia que sostiene la propuesta"
             />
             <div className="evidence-list">
-              {[
-                [
-                  "Importe compatible",
-                  `La obligación de agosto es de ${featuredAmount}`,
-                ],
-                [
-                  "Fecha compatible",
-                  "El pago llegó dentro del período esperado",
-                ],
-                [
-                  "Referencia compatible",
-                  "La señal bancaria coincide con antecedentes",
-                ],
-              ].map((x) => (
-                <div key={x[0]}>
+              {featuredPayment.candidates[0].evidence.map((signal) => (
+                <div key={signal}>
                   <span>
                     <Icon name="check" size={14} />
                   </span>
                   <p>
-                    <b>{x[0]}</b>
-                    <small>{x[1]}</small>
+                    <b>{signal}</b>
+                    <small>{EVIDENCE_DESCRIPTIONS[signal] ?? signal}</small>
                   </p>
                 </div>
               ))}
@@ -1039,14 +1104,18 @@ function Resolution({
             <SectionTitle eyebrow="DECISIÓN" title="¿Cómo querés resolverlo?" />
             {other ? (
               <div className="unit-picker">
-                <label>
-                  <input type="radio" name="unit" defaultChecked /> Santa Fe
-                  1842 · 2A
-                </label>
-                <label>
-                  <input type="radio" name="unit" /> Arenales 2210 · 7C
-                </label>
-                <button className="primary" onClick={confirm}>
+                {featuredPayment.candidates.map((candidate) => (
+                  <label key={candidate.unit}>
+                    <input
+                      type="radio"
+                      name="unit"
+                      checked={pendingUnit === candidate.unit}
+                      onChange={() => setPendingUnit(candidate.unit)}
+                    />
+                    {candidate.consortium} · {candidate.unit}
+                  </label>
+                ))}
+                <button className="primary" onClick={() => confirm(pendingUnit)}>
                   Confirmar unidad elegida
                 </button>
                 <button className="text" onClick={() => setOther(false)}>
@@ -1055,7 +1124,7 @@ function Resolution({
               </div>
             ) : (
               <>
-                <button className="primary wide" onClick={confirm}>
+                <button className="primary wide" onClick={() => confirm(featuredPayment.candidates[0].unit)}>
                   <Icon name="check" /> Confirmar conciliación
                 </button>
                 <button
@@ -1315,11 +1384,14 @@ function Consortia({ go, select }: { go: (v: View) => void; select: (name: strin
   );
 }
 
-function Consortium({ go, organizationName }: { go: (v: View) => void; organizationName: string }) {
+function Consortium({ go, organizationName, resolved }: { go: (v: View) => void; organizationName: string; resolved: boolean }) {
   const [tab, setTab] = useState("Resumen");
   const organization = demoData.consortia.find((item) => item.name === organizationName) || demoData.consortia[0];
   const organizationDocuments = demoData.documents.filter((item) => item.consortium === organization.name);
-  const pendingReconciliations = "reconciliationPending" in organization ? Number(organization.reconciliationPending) : 0;
+  // TASK V2.4.1 — casos de conciliación abiertos para ESTE consorcio, derivados en vivo de
+  // decisionCases(resolved): nunca un contador estático que siga mostrando "requiere
+  // confirmación" después de que el administrador ya confirmó el caso.
+  const openReconciliationCases = demoSelectors.decisionCases(resolved).filter((payment) => payment.candidates.some((candidate) => candidate.consortium === organization.name)).length;
   return (
     <div className="consortium-detail">
       <button className="back" onClick={() => go("consortia")}>
@@ -1334,7 +1406,7 @@ function Consortium({ go, organizationName }: { go: (v: View) => void; organizat
           <h1>{organization.name}</h1>
           <span>{organization.neighborhood} · {organization.units} unidades</span>
         </div>
-        <Status tone={organization.status === "Prioridad" ? "danger" : "warning"}>{organization.pending} situaciones requieren atención</Status>
+        <Status tone={organization.status === "Prioridad" ? "danger" : "warning"}>{openReconciliationCases} situaciones requieren atención</Status>
       </div>
       <div className="detail-tabs">
         {[
@@ -1360,7 +1432,7 @@ function Consortium({ go, organizationName }: { go: (v: View) => void; organizat
             <Kpi
               label="Cobranza del mes"
               value={`${organization.collectionRate}%`}
-              note={`${pendingReconciliations} para revisar`}
+              note={`${openReconciliationCases} para revisar`}
               tone="success"
             />
             <Kpi label="Unidades" value={String(organization.units)} note="administradas" />
@@ -1380,7 +1452,7 @@ function Consortium({ go, organizationName }: { go: (v: View) => void; organizat
           <section className="detail-activity card">
             <SectionTitle eyebrow="ACTIVIDAD RECIENTE" title={organization.name} />
             {[
-              ...demoData.reconciliation.decisionCases.filter((payment) => payment.candidates.some((candidate) => candidate.consortium === organization.name)).map((payment) => ({ time: formatMovementDate(payment.receivedAt), event: `Pago de ${formatMoney(payment.amount)} requiere confirmación` })),
+              ...demoSelectors.decisionCases(resolved).filter((payment) => payment.candidates.some((candidate) => candidate.consortium === organization.name)).map((payment) => ({ time: formatMovementDate(payment.receivedAt), event: `Pago de ${formatMoney(payment.amount)} requiere confirmación` })),
               ...demoData.activity.filter((item) => item.meta.includes(organization.name)).map((item) => ({ time: item.time, event: `${item.event} · ${item.meta}` })),
             ].map((item) => (
               <div key={item.time + item.event}>
@@ -1500,13 +1572,13 @@ function Documents({
   );
 }
 
-function EvidenceFlow({ go }: { go: (v: View) => void }) {
+function EvidenceFlow({ go, resolved }: { go: (v: View) => void; resolved: boolean }) {
   const steps = [
     ["Recibido", "WhatsApp · 10:49"],
     ["Datos detectados", `${featuredAmount} · ${featuredDate}`],
     ["Movimiento encontrado", `Transferencia · ${featuredPayment.bank}`],
     ["Unidad identificada", `${featuredPayment.candidates[0].consortium} · ${featuredPayment.candidates[0].unit}`],
-    ["Conciliación preparada", "Requiere confirmación"],
+    ["Conciliación preparada", resolved ? "Confirmada" : "Requiere confirmación"],
   ];
   return (
     <div className="evidence-page">
@@ -1539,16 +1611,19 @@ function EvidenceFlow({ go }: { go: (v: View) => void }) {
           </div>
         </div>
         <div className="flow-steps">
-          {steps.map((x, i) => (
-            <div key={x[0]} className={i < 4 ? "done" : "attention"}>
-              <span>{i < 4 ? <Icon name="check" size={14} /> : i + 1}</span>
-              <p>
-                <b>{x[0]}</b>
-                <small>{x[1]}</small>
-              </p>
-              {i < steps.length - 1 && <i />}
-            </div>
-          ))}
+          {steps.map((x, i) => {
+            const done = i < 4 || resolved;
+            return (
+              <div key={x[0]} className={done ? "done" : "attention"}>
+                <span>{done ? <Icon name="check" size={14} /> : i + 1}</span>
+                <p>
+                  <b>{x[0]}</b>
+                  <small>{x[1]}</small>
+                </p>
+                {i < steps.length - 1 && <i />}
+              </div>
+            );
+          })}
         </div>
         <div className="signal-match">
           <p>SEÑALES COINCIDENTES</p>
@@ -1572,8 +1647,8 @@ function EvidenceFlow({ go }: { go: (v: View) => void }) {
             <h3>Transferencia {featuredAmount}</h3>
             <span>{featuredPayment.bank} · {formatMovementDate(featuredPayment.receivedAt)}</span>
           </div>
-          <button className="primary" onClick={() => go("resolution")}>
-            Revisar coincidencia
+          <button className="primary" onClick={() => go(resolved ? "reconciliation" : "resolution")}>
+            {resolved ? "Ver conciliación confirmada" : "Revisar coincidencia"}
             <Icon name="arrow" size={15} />
           </button>
         </div>
@@ -1669,11 +1744,11 @@ function Agent({ go }: { go: (v: View) => void }) {
           <b>Operación de hoy</b>
           <small>Prioridades y excepciones</small>
         </button>
-        <button>
+        <button onClick={() => { setMessages([]); setConversationState({}); send("¿Qué pagos necesitan revisión?"); }}>
           <b>Conciliaciones</b>
           <small>Pagos y movimientos</small>
         </button>
-        <button>
+        <button onClick={() => { setMessages([]); setConversationState({}); send("¿Dónde tengo mayor mora?"); }}>
           <b>Morosidad</b>
           <small>Cobranza prioritaria</small>
         </button>
@@ -1903,11 +1978,15 @@ function Settings() {
 function GlobalSearch({
   close,
   go,
+  resolved,
+  resolvedUnit,
   openDoc,
   selectOrganization,
 }: {
   close: () => void;
   go: (v: View) => void;
+  resolved: boolean;
+  resolvedUnit: string;
   openDoc: (d: (typeof documents)[number]) => void;
   selectOrganization: (name: string) => void;
 }) {
@@ -1923,14 +2002,14 @@ function GlobalSearch({
       items: [
         {
           label: `Transferencia ${featuredAmount}`,
-          meta: `${formatMovementDate(featuredPayment.receivedAt)} · ${featuredPayment.candidates[0].consortium} · ${featuredPayment.candidates[0].unit}`,
-          action: () => go("resolution"),
+          meta: `${formatMovementDate(featuredPayment.receivedAt)} · ${featuredPayment.candidates[0].consortium} · ${resolved ? `Unidad ${resolvedUnit} · Conciliado` : featuredPayment.candidates[0].unit}`,
+          action: () => go(resolved ? "reconciliation" : "resolution"),
         },
       ],
     },
     {
       title: "UNIDADES",
-      items: demoData.unitProfiles.map((unit) => ({ label: `${unit.consortium} · ${unit.unit}`, meta: `${unit.owner} · ${unit.history[0].status}`, action: () => selectOrganization(unit.consortium) })),
+      items: demoData.unitProfiles.map((unit) => ({ label: `${unit.consortium} · ${unit.unit}`, meta: `${unit.owner} · ${resolved && unit.consortium === featuredPayment.candidates[0].consortium && unit.unit === resolvedUnit ? "Pagada" : unit.history[0].status}`, action: () => selectOrganization(unit.consortium) })),
     },
     {
       title: "CONSORCIOS",
@@ -2000,7 +2079,7 @@ function Notifications({
       </div>
       {[
         ["alert", "3 situaciones requieren revisión", "Conciliación"],
-        ["whatsapp", "Nuevo comprobante recibido", "WhatsApp · ahora"],
+        ["whatsapp", "Nuevo comprobante · demostración", "WhatsApp simulado · ahora"],
         ["info", "Movimiento sin identificar", "$146.800"],
       ].map((x, i) => (
         <button

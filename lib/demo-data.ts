@@ -90,12 +90,21 @@ const currentPeriodCollected = 20000000;
 const currentPeriodOutstanding = currentPeriodIssued - currentPeriodCollected;
 const priorPeriodsOutstanding = consortia.reduce((sum, consortium) => sum + consortium.debt, 0) - currentPeriodOutstanding;
 
+// TASK V2.4.1 — "identificados"/"resuelto" para este lote de 184 movimientos se deriva
+// UNA sola vez acá, desde decisionCases/informationCases. Import (demoSelectors.importSummary),
+// Conciliación (summary-strip) y el straight-through rate leen todos este mismo valor:
+// nunca dos números distintos para el mismo concepto en el mismo journey.
+const reconciliationMovements = 184;
+const reconciliationTotalAmount = 24800000;
+const reconciliationResolved = reconciliationMovements - decisionCases.length - informationCases.length;
+const reconciliationStraightThroughRate = Math.round((reconciliationResolved / reconciliationMovements) * 1000) / 10;
+
 export const demoData = {
   environment: { label: "DATOS SIMULADOS", administration: "Administración Central", date: "21 agosto 2026", locale: "es-AR" },
   portfolio: { consortia: consortia.length, units: units.length, underControl: consortia.filter((item) => item.status === "Estable" || item.status === "Al día").length, attention: consortia.filter((item) => item.status === "Atención").length, risk: consortia.filter((item) => item.status === "Prioridad").length },
   consortia,
   units,
-  reconciliation: { period: "agosto 2026", movements: 184, totalAmount: 24800000, resolved: 163, decisionCases, informationCases, resolvedPayments, requiresInformation: informationCases.length, requiresDecision: decisionCases.length, straightThroughRate: 88.6, featuredPayment, identifiedTodayBefore: 1284000, resolvedTodayBefore: 4, historyCasesTodayBefore: 2 },
+  reconciliation: { period: "agosto 2026", movements: reconciliationMovements, totalAmount: reconciliationTotalAmount, resolved: reconciliationResolved, decisionCases, informationCases, resolvedPayments, requiresInformation: informationCases.length, requiresDecision: decisionCases.length, straightThroughRate: reconciliationStraightThroughRate, featuredPayment, identifiedTodayBefore: 1284000, resolvedTodayBefore: 4, historyCasesTodayBefore: 2 },
   collections: { currentPeriodIssued, currentPeriodCollected, currentPeriodOutstanding, priorPeriodsOutstanding, pending: currentPeriodOutstanding + priorPeriodsOutstanding, unitsWithBalance: units.filter((unit) => unit.outstanding > 0).length, requireFollowUp: units.filter((unit) => unit.outstanding > 0 && unit.days >= 45).length, overdue: units.filter((unit) => unit.outstanding > 0), issued: currentPeriodIssued, collected: currentPeriodCollected },
   unitProfiles: [
     { consortium: "Arenales 2210", unit: "2A", owner: "María Fernández", occupant: "Carlos Fernández", payer: "Carlos Fernández", bankSignal: "•••• 4812", history: [{ period: "ago 2026", amount: 248500, status: "Pendiente" }, { period: "jul 2026", amount: 205000, status: "Pagada" }, { period: "jun 2026", amount: 198500, status: "Pagada" }, { period: "may 2026", amount: 191200, status: "Pagada" }] },

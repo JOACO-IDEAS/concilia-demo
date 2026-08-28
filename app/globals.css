@@ -2702,9 +2702,11 @@ main {
   }
   .page-head {
     align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 12px;
   }
   .page-head .primary {
-    display: none;
+    width: 100%;
   }
   .home-side {
     grid-template-columns: 1fr;
