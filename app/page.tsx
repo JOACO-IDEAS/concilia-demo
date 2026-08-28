@@ -383,7 +383,7 @@ export default function ProductDemo() {
             <Reconciliation resolved={resolved} go={go} />
           )}
           {view === "resolution" && <Resolution confirm={confirm} go={go} />}
-          {view === "debt" && <Debt notify={notify} />}
+          {view === "debt" && <Debt />}
           {view === "consortia" && <Consortia go={go} select={(name) => { setSelectedOrganization(name); go("consortium"); }} />}
           {view === "consortium" && <Consortium go={go} organizationName={selectedOrganization} />}
           {view === "documents" && <Documents open={setDoc} />}
@@ -1124,9 +1124,10 @@ function Receipt() {
   );
 }
 
-function Debt({ notify }: { notify: (x: string) => void }) {
+function Debt() {
   const [filter, setFilter] = useState("Todas");
-  const debts = demoData.collections.overdue.map((item) => ({ unit: item.unit, place: item.consortium, amount: formatMoney(item.outstanding), days: item.days, lastContact: item.lastContact, priority: item.status, tone: item.days > 60 ? "danger" : item.days > 30 ? "warning" : "neutral" }));
+  const [detail, setDetail] = useState<(typeof debts)[number] | null>(null);
+  const debts = demoData.collections.overdue.map((item) => ({ unit: item.unit, place: item.consortium, owner: item.owner, outstanding: item.outstanding, amount: formatMoney(item.outstanding), days: item.days, lastContact: item.lastContact, promise: item.promise, priority: item.status, tone: item.days > 60 ? "danger" : item.days > 30 ? "warning" : "neutral" }));
   const over60 = demoData.collections.overdue.filter((item) => item.days > 60);
   return (
     <div className="debt-page">
@@ -1162,6 +1163,7 @@ function Debt({ notify }: { notify: (x: string) => void }) {
         </div>
         {debts
           .filter((x) => filter !== "+60 días" || x.days > 60)
+          .sort((a, b) => (filter === "Mayor importe" ? b.outstanding - a.outstanding : 0))
           .map((x) => (
             <article key={x.place + x.unit}>
               <div className="unit-avatar">{x.unit}</div>
@@ -1174,17 +1176,71 @@ function Debt({ notify }: { notify: (x: string) => void }) {
               <strong>{x.amount}</strong>
               <span>{x.days} días</span>
               <Status tone={x.tone}>{x.priority}</Status>
-              <button
-                onClick={() =>
-                  notify(`Detalle abierto · ${x.place} · ${x.unit}`)
-                }
-              >
+              <button onClick={() => setDetail(x)}>
                 Ver detalle
                 <Icon name="arrow" size={14} />
               </button>
             </article>
           ))}
       </section>
+      {detail && <DebtDetail item={detail} close={() => setDetail(null)} />}
+    </div>
+  );
+}
+
+function DebtDetail({
+  item,
+  close,
+}: {
+  item: { unit: string; place: string; owner: string; amount: string; days: number; lastContact: string; promise: string | null; priority: string; tone: string };
+  close: () => void;
+}) {
+  return (
+    <div className="modal-overlay" onClick={close}>
+      <div className="debt-modal" onClick={(e) => e.stopPropagation()}>
+        <header>
+          <div>
+            <p>MOROSIDAD · {item.place.toUpperCase()}</p>
+            <h2>Unidad {item.unit}</h2>
+          </div>
+          <button onClick={close} aria-label="Cerrar">
+            <Icon name="close" />
+          </button>
+        </header>
+        <div className="debt-detail-body">
+          <div className="debt-detail-top">
+            <strong>{item.amount}</strong>
+            <Status tone={item.tone}>{item.priority}</Status>
+          </div>
+          <dl>
+            <div>
+              <dt>Consorcio</dt>
+              <dd>{item.place}</dd>
+            </div>
+            <div>
+              <dt>Propietario</dt>
+              <dd>{item.owner}</dd>
+            </div>
+            <div>
+              <dt>Antigüedad de la mora</dt>
+              <dd>{item.days} días</dd>
+            </div>
+            <div>
+              <dt>Última gestión</dt>
+              <dd>{item.lastContact}</dd>
+            </div>
+            <div>
+              <dt>Promesa de pago</dt>
+              <dd>{item.promise || "Sin promesa registrada"}</dd>
+            </div>
+          </dl>
+        </div>
+        <footer>
+          <button className="secondary" onClick={close}>
+            Cerrar
+          </button>
+        </footer>
+      </div>
     </div>
   );
 }

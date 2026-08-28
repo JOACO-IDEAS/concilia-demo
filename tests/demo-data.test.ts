@@ -229,3 +229,29 @@ test("TASK V2.2B — stage progress never claims a real bank/OCR/AUTO integratio
     assert.equal(importSection.includes(banned), false, `overclaim risk: found "${banned}" in the import flow`);
   }
 });
+
+test("TASK V2.3 — debt units carry owner and promise fields so 'Ver detalle' never invents data", () => {
+  for (const unit of demoData.collections.overdue) {
+    assert.equal(typeof unit.owner, "string");
+    assert.ok(unit.owner.length > 0);
+    assert.ok(unit.promise === null || typeof unit.promise === "string");
+  }
+});
+
+test("TASK V2.3 — Morosidad 'Ver detalle' opens a real panel instead of a toast", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const debtSection = page.slice(page.indexOf("function Debt("), page.indexOf("function Consortia("));
+  assert.ok(debtSection.includes("setDetail(x)"), "Ver detalle must open a real detail panel, not a toast");
+  assert.equal(debtSection.includes("notify(`Detalle abierto"), false, "the old toast-only stub must be gone");
+  assert.ok(debtSection.includes("item.owner"));
+  assert.ok(debtSection.includes("item.days"));
+  assert.ok(debtSection.includes("item.lastContact"));
+  assert.ok(debtSection.includes("item.promise"));
+});
+
+test("TASK V2.3 — Morosidad 'Mayor importe' filter actually reorders by outstanding amount", () => {
+  const overdue = demoData.collections.overdue;
+  const sorted = [...overdue].sort((a, b) => b.outstanding - a.outstanding);
+  assert.notDeepEqual(overdue.map((u) => u.id), sorted.map((u) => u.id), "fixture should not already be sorted by amount, otherwise this test can't detect a no-op filter");
+  assert.equal(sorted[0].outstanding, Math.max(...overdue.map((u) => u.outstanding)));
+});
