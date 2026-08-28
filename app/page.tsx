@@ -381,7 +381,7 @@ export default function ProductDemo() {
               )}
             </div>
           )}
-          {view === "home" && <Home resolved={resolved} go={go} />}
+          {view === "home" && <Home resolved={resolved} resolvedUnit={resolvedUnit} go={go} />}
           {view === "reconciliation" && (
             <Reconciliation resolved={resolved} resolvedUnit={resolvedUnit} go={go} />
           )}
@@ -428,10 +428,10 @@ export default function ProductDemo() {
   );
 }
 
-function Home({ resolved, go }: { resolved: boolean; go: (v: View) => void }) {
+function Home({ resolved, resolvedUnit, go }: { resolved: boolean; resolvedUnit: string; go: (v: View) => void }) {
   const decisions = demoSelectors.decisionCases(resolved);
   const informationCase = demoData.reconciliation.informationCases[0];
-  const recent = demoSelectors.activity(resolved);
+  const recent = demoSelectors.activity(resolved, resolvedUnit);
   return (
     <div className="home-grid">
       <section className="work-queue">

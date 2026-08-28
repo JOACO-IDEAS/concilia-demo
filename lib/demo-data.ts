@@ -134,7 +134,10 @@ export const demoSelectors = {
   resolvedToday: (resolved = false) => demoData.reconciliation.resolvedTodayBefore + (resolved ? 1 : 0),
   historyCasesToday: (resolved = false) => demoData.reconciliation.historyCasesTodayBefore + (resolved ? 1 : 0),
   identificationRate: (resolved = false) => Math.round(((demoData.reconciliation.resolved + (resolved ? 1 : 0)) / demoData.reconciliation.movements) * 100),
-  activity: (resolved = false) => resolved ? [{ time: "Ahora", event: "Conciliación confirmada", meta: `$${demoData.reconciliation.featuredPayment.amount.toLocaleString("es-AR")} · Arenales 2210 · 2A` }, ...demoData.activity] : demoData.activity,
+  // TASK V2.4.2 — la unidad del evento post-confirmación es la que efectivamente
+  // eligió el administrador (resolvedUnit), nunca "2A" hardcodeado: si confirmó
+  // 7C, la actividad de Inicio debe decir 7C, igual que Conciliación/búsqueda/estado.
+  activity: (resolved = false, unit = demoData.reconciliation.featuredPayment.candidates[0].unit) => resolved ? [{ time: "Ahora", event: "Conciliación confirmada", meta: `$${demoData.reconciliation.featuredPayment.amount.toLocaleString("es-AR")} · Arenales 2210 · ${unit}` }, ...demoData.activity] : demoData.activity,
   averageCollectionRate: () => Math.round(demoData.consortia.reduce((sum, item) => sum + item.collectionRate, 0) / demoData.consortia.length),
   unit: (consortium: string, unit: string) => demoData.units.find((item) => item.consortium === consortium && item.unit === unit),
   // TASK V2.2 — clasificación derivada exclusivamente de reconciliation.*: nunca un

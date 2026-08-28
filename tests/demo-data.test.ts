@@ -377,3 +377,33 @@ test("TASK V2.4.1 — reset restores resolvedUnit to the default candidate along
   assert.ok(resetBody.includes("setResolvedUnit(featuredPayment.candidates[0].unit)"), "reset must restore the default candidate, not leave a previous session's chosen unit behind");
   assert.ok(resetBody.includes("setResolved(false)"));
 });
+
+test("TASK V2.4.2 — post-confirm activity reflects whichever unit was actually confirmed, default and alternative", () => {
+  const [primary, alternative] = demoData.reconciliation.featuredPayment.candidates;
+  assert.notEqual(primary.unit, alternative.unit, "fixture must have two distinct real candidates for this test to mean anything");
+
+  // DEFAULT — confirming the primary proposal (2A) must produce a 2A activity event.
+  const defaultActivity = demoSelectors.activity(true, primary.unit);
+  assert.match(defaultActivity[0].meta, new RegExp(`Arenales 2210 · ${primary.unit}$`));
+  assert.ok(defaultActivity[0].meta.includes("248.500"));
+
+  // ALTERNATIVE — confirming 7C must produce a 7C activity event, not a hardcoded 2A.
+  const alternativeActivity = demoSelectors.activity(true, alternative.unit);
+  assert.match(alternativeActivity[0].meta, new RegExp(`Arenales 2210 · ${alternative.unit}$`));
+  assert.equal(alternativeActivity[0].meta.includes(`· ${primary.unit}`), false, "confirming the alternative must never leave the default unit in the activity event");
+
+  // Omitting the unit must still default to the primary candidate (never throw, never say "undefined").
+  assert.match(demoSelectors.activity(true)[0].meta, new RegExp(`Arenales 2210 · ${primary.unit}$`));
+
+  // Not resolved: activity must be the untouched historical log, regardless of unit.
+  assert.deepEqual(demoSelectors.activity(false, alternative.unit), demoData.activity);
+});
+
+test("TASK V2.4.2 — Home actually threads resolvedUnit into the activity selector, not just 'resolved'", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const homeSection = page.slice(page.indexOf("function Home("), page.indexOf("function Reconciliation("));
+  assert.ok(homeSection.includes("demoSelectors.activity(resolved, resolvedUnit)"), "Home must pass resolvedUnit through, otherwise the activity event silently falls back to the hardcoded default candidate");
+  const homeCallSite = page.slice(0, page.indexOf("function Home(")).lastIndexOf("<Home ");
+  const homeCall = page.slice(homeCallSite, page.indexOf("/>", homeCallSite));
+  assert.ok(homeCall.includes("resolvedUnit={resolvedUnit}"), "ProductDemo must pass resolvedUnit down to Home");
+});
