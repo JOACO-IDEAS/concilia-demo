@@ -118,6 +118,15 @@ const maintenanceAssets = [
   },
 ];
 
+// TASK V3.1 — plan sugerido de seguimiento de cobranza. Es copy de plantilla
+// (una secuencia demostrativa), no facturación ni automatización real: nunca
+// se envía nada, "status" sólo describe qué etapa muestra la demo hoy.
+const collectionPlaybook = [
+  { day: 0, label: "Recordatorio inicial", status: "completado" },
+  { day: 3, label: "Segundo seguimiento", status: "pendiente" },
+  { day: 7, label: "Revisión del administrador", status: "futuro" },
+];
+
 const currentPeriodIssued = 24820000;
 const currentPeriodCollected = 20000000;
 const currentPeriodOutstanding = currentPeriodIssued - currentPeriodCollected;
@@ -146,6 +155,7 @@ export const demoData = {
   documents,
   invoices,
   maintenanceAssets,
+  collectionPlaybook,
   providers: ["Ascensores Delta", "Christophersen Ascensores", "Limpieza Integral SRL", "Seguridad Urbana", "Servicios Sanitarios BA", "ElectroConsorcio", "Aguas del Río", "Luz Metropolitana"],
   communications: { today: 23, evidenceDetected: 8, receiptsLinked: 5, requiresConfirmation: 1, examples: [
     { from: "María Fernández", context: "Arenales 2210 · 2A", message: "Hola, transferí hoy las expensas. Te mando el comprobante.", detected: "Posible comprobante · $248.500", signal: "teléfono terminado en •4812" },
@@ -240,6 +250,31 @@ export const demoSelectors = {
     if (orgMaintenance.length) items.push({ category: "mantenimiento", count: orgMaintenance.length, asset: orgMaintenance[0], view: "maintenance" });
 
     return items;
+  },
+  // TASK V3.1 — documentos de un consorcio ordenados por vencimiento futuro real
+  // (fecha >= DEMO_DATE), para responder "¿cuál vence primero?" sin inventar prosa
+  // independiente de la fecha almacenada en cada documento.
+  documentsSortedByUpcomingDeadline: (organizationName: string) => {
+    const parse = (value: string) => { const [dd, mm, yyyy] = value.split("/").map(Number); return new Date(yyyy, mm - 1, dd).getTime(); };
+    const today = new Date(DEMO_DATE).getTime();
+    return demoData.documents
+      .filter((d) => d.consortium === organizationName && parse(d.date) >= today)
+      .sort((a, b) => parse(a.date) - parse(b.date));
+  },
+  // Mensaje de seguimiento derivado exclusivamente de la unidad real (nunca prosa
+  // independiente del dataset). Sólo texto preparado — nunca se envía desde acá.
+  buildFollowupMessage: (unit: { owner: string; unit: string; consortium: string; outstanding: number }) => {
+    const firstName = unit.owner.split(" ")[0];
+    return `Hola ${firstName}, te contactamos por el saldo pendiente de la unidad ${unit.unit} de ${unit.consortium}. Actualmente registra $${unit.outstanding.toLocaleString("es-AR")} pendientes. Cualquier consulta, estamos a disposición.`;
+  },
+  // Comprobante $248.500 aplicado como PAGO PARCIAL sobre la deuda de la unidad —
+  // nunca implica que salda el total. El saldo restante siempre se calcula, nunca
+  // se hardcodea, así que cualquier cambio futuro al monto de cualquiera de los
+  // dos lados sigue siendo consistente automáticamente.
+  followupReceiptSummary: (unit: { outstanding: number }) => {
+    const received = demoData.reconciliation.featuredPayment.amount;
+    const remaining = unit.outstanding - received;
+    return { received, remaining, isPartial: remaining > 0 };
   },
 };
 

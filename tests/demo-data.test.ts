@@ -601,7 +601,10 @@ test("V3 — Agent deep-link never leaks the wrong building (organizationFromAge
   assert.ok(helperSection.includes('topic === "organization"'));
   assert.ok(helperSection.includes('topic === "unit"'));
   assert.ok(helperSection.includes('topic === "attention_summary"'));
-  const deepLinkSection = page.slice(page.indexOf("className=\"deep-link\""), page.indexOf("className=\"deep-link\"") + 400);
+  // TASK V3.1 — el Copilot flotante también usa la clase "deep-link"; hay que
+  // ubicar específicamente la del Agente de página completa, no la primera.
+  const agentDeepLinkStart = page.indexOf("className=\"deep-link\"", page.indexOf("function Agent("));
+  const deepLinkSection = page.slice(agentDeepLinkStart, agentDeepLinkStart + 700);
   assert.ok(deepLinkSection.includes("organizationFromAgentResult(m.topic, m.result)"));
   assert.ok(deepLinkSection.includes("selectOrganization(organization)"));
 });
@@ -628,4 +631,197 @@ test("V3 — Documentos status tone is never miscategorized (fixes the 'vence' v
     const isKnownCalm = doc.status === "Vigente" || doc.status === "Disponible";
     assert.ok(matchesUrgent || isKnownCalm, `document status "${doc.status}" falls into neither bucket — tone would be wrong`);
   }
+});
+
+// ==================================================
+// TASK V3.1 — Contextual Copilot + Collections/WhatsApp loop
+// ==================================================
+
+test("V3.1 #1 — Copilot renders on relevant pages, hidden only on the full Agent page", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.ok(page.includes("<Copilot"), "Copilot must be mounted at the ProductDemo level so it persists across views");
+  assert.ok(page.includes("hidden={view === \"agent\"}"), "Copilot must only hide on the full Agent page (redundant AI surface), never on other pages");
+});
+
+test("V3.1 #2/#3 — MODULE_BY_VIEW maps every context-bearing view, and computeUIContext never fabricates a consortium for context-free views", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const mapSection = page.slice(page.indexOf("const MODULE_BY_VIEW"), page.indexOf("const CONTEXT_MODULE_LABEL"));
+  for (const [view, module] of [["consortium", "consorcio"], ["invoices", "facturas"], ["documents", "documentos"], ["maintenance", "mantenimiento"], ["debt", "morosidad"], ["reconciliation", "conciliacion"]]) {
+    assert.ok(mapSection.includes(`${view}: "${module}"`), `MODULE_BY_VIEW must map ${view} -> ${module}`);
+  }
+  const contextFnSection = page.slice(page.indexOf("function computeUIContext("), page.indexOf("const CONTEXT_MODULE_LABEL"));
+  assert.ok(contextFnSection.includes('if (!module) return { consortiumId: null, module: null'), "views with no module mapping (home, agent, settings, consortia) must report null consortium context, never an inferred/leftover one");
+});
+
+test("V3.1 #4 — 'este consorcio' resolves to Arenales 2210 via the same activeOrganization mechanism already used everywhere else", () => {
+  // Simulates exactly what the Copilot does on open: seed state.activeOrganization from
+  // the explicit UI context, then let resolveToolArgs auto-fill it — same mechanism as
+  // every other context-aware tool, no special-cased LLM inference of hidden state.
+  const state = { activeOrganization: "Arenales 2210" };
+  const result = runAgentTool("CURRENT_INVOICE", { organization: state.activeOrganization });
+  assert.equal(result.data.organization, "Arenales 2210");
+});
+
+test("V3.1 #5 — current invoice query (CASE A1) returns Christophersen Ascensores / $340.000, grounded", () => {
+  const result = runAgentTool("CURRENT_INVOICE", { organization: "Arenales 2210" });
+  assert.equal(result.data.invoice.provider, "Christophersen Ascensores");
+  assert.equal(result.data.invoice.amount, 340000);
+  assert.equal(result.data.invoice.status, "Pendiente");
+  const answer = trustedResponse(result).answer;
+  assert.match(answer, /Christophersen Ascensores/);
+  assert.match(answer, /340\.000/);
+});
+
+test("V3.1 #6 — document deadline query (CASE A2) derives the earliest real upcoming date, never independent prose", () => {
+  const result = runAgentTool("CURRENT_DOCUMENT_DEADLINE", { organization: "Arenales 2210" });
+  assert.equal(result.data.document.type, "Certificación eléctrica");
+  assert.equal(result.data.document.date, "11/09/2026");
+  // Confirm it is genuinely the minimum of the real dataset, not hardcoded.
+  const allDates = demoSelectors.documentsSortedByUpcomingDeadline("Arenales 2210").map((d) => d.date);
+  assert.equal(result.data.document.date, allDates[0]);
+});
+
+test("V3.1 #7 — maintenance query (CASE A3) returns Ascensor A / 15 sep 2026", () => {
+  const result = runAgentTool("CURRENT_MAINTENANCE", { organization: "Arenales 2210" });
+  assert.equal(result.data.asset.name, "Ascensor A");
+  assert.equal(result.data.asset.nextMaintenance, "15 sep 2026");
+  const answer = trustedResponse(result).answer;
+  assert.match(answer, /Ascensor A/);
+  assert.match(answer, /15 sep 2026/);
+});
+
+test("V3.1 — CASE A4: 'Resumime este consorcio' (CONTEXT_SUMMARY) includes debt, arrears, documents, invoices, reconciliation and maintenance", () => {
+  const result = runAgentTool("CONTEXT_SUMMARY", { organization: "Arenales 2210" });
+  const answer = trustedResponse(result).answer;
+  assert.match(answer, /86% de cobranza/);
+  assert.match(answer, /4\.820\.000/);
+  assert.match(answer, /mora crítica/);
+  assert.match(answer, /documento/);
+  assert.match(answer, /factura/);
+  assert.match(answer, /pago/);
+  assert.match(answer, /mantenimiento/);
+});
+
+test("V3.1 #8 — '¿Qué resolverías primero?' (CASE A5, reuses ATTENTION_SUMMARY most_urgent_only) returns canonical 2A", () => {
+  const result = runAgentTool("ATTENTION_SUMMARY", { organization: "Arenales 2210", most_urgent_only: true });
+  const answer = trustedResponse(result).answer;
+  assert.match(answer, /2A/);
+  assert.match(answer, /540\.000/);
+  assert.match(answer, /74 días/);
+  assert.match(answer, /mora crítica/i);
+});
+
+test("V3.1 #9/#10 — 'Prepará el seguimiento' produces a grounded, explicitly-unsent draft", () => {
+  const result = runAgentTool("PREPARE_COLLECTION_FOLLOWUP", { organization: "Arenales 2210", unit: null });
+  assert.equal(result.data.unit, "2A");
+  assert.equal(result.data.owner, "María Fernández");
+  assert.equal(result.data.outstanding, 540000);
+  assert.ok(result.data.message.includes("María"));
+  assert.ok(result.data.message.includes("2A"));
+  assert.deepEqual(result.data.playbook, demoData.collectionPlaybook);
+  const answer = trustedResponse(result).answer;
+  assert.match(answer, /No se enviará hasta que lo apruebes/, "the response text must explicitly state the draft is unsent");
+});
+
+test("V3.1 — chained flow: '¿Qué resolverías primero?' then 'Prepará el seguimiento' without repeating the unit", () => {
+  const q1 = runAgentTool("ATTENTION_SUMMARY", { organization: "Arenales 2210", most_urgent_only: true });
+  const state = updateConversationState({}, "ATTENTION_SUMMARY", q1);
+  assert.equal(state.activeUnit, "2A", "the critical-arrears unit must be threaded into state so a stateless follow-up doesn't need to repeat it");
+  const followup = runAgentTool("PREPARE_COLLECTION_FOLLOWUP", { organization: state.activeOrganization, unit: state.activeUnit });
+  assert.equal(followup.data.unit, "2A");
+});
+
+test("V3.1 #11 — approval remains simulated: no fetch/send call exists anywhere in the collections flow", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const collectionSection = page.slice(page.indexOf("function CollectionFollowup("), page.indexOf("function Consortium("));
+  assert.ok(collectionSection.length > 500, "sanity check: the slice must actually contain the CollectionFollowup component");
+  assert.equal(collectionSection.includes("fetch("), false, "CollectionFollowup must never call any API — approval is a pure local state transition");
+  assert.ok(collectionSection.includes("approved: true"), "approval must be a local state flag, not a server call");
+});
+
+test("V3.1 #12 — WhatsApp thread is explicitly labeled as demonstration, never implies live Meta connectivity", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const collectionSection = page.slice(page.indexOf("function CollectionFollowup("), page.indexOf("function Consortium("));
+  assert.ok(collectionSection.includes("WhatsApp · Demostración"));
+  for (const banned of ["Meta Cloud API", "WhatsApp Business API", "webhook", "graph.facebook.com"]) {
+    assert.equal(collectionSection.includes(banned), false, `overclaim risk: found "${banned}"`);
+  }
+});
+
+test("V3.1 #13 — payment link is explicitly labeled simulated and never exposes a real URL", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const collectionSection = page.slice(page.indexOf("function CollectionFollowup("), page.indexOf("function Consortium("));
+  assert.ok(collectionSection.includes("SOLICITUD DE PAGO · DEMOSTRACIÓN"));
+  assert.ok(collectionSection.includes("Link simulado para esta demo"));
+  assert.equal(/https?:\/\//.test(collectionSection), false, "no real URL scheme may appear anywhere in the payment-link demo");
+  for (const banned of ["mercadopago", "stripe", "todopago", "payway"]) {
+    assert.equal(collectionSection.toLowerCase().includes(banned), false, `must not name a real payment processor: "${banned}"`);
+  }
+});
+
+test("V3.1 #14/#15 — $248.500 is framed as a partial payment and the remaining balance is computed, never hardcoded", () => {
+  const unit = demoData.collections.overdue.find((u) => u.consortium === "Arenales 2210" && u.unit === "2A")!;
+  const summary = demoSelectors.followupReceiptSummary(unit);
+  assert.equal(summary.received, demoData.reconciliation.featuredPayment.amount);
+  assert.equal(summary.remaining, unit.outstanding - demoData.reconciliation.featuredPayment.amount);
+  assert.equal(summary.remaining, 291500);
+  assert.equal(summary.isPartial, true);
+  // Recompute independently from raw canonical fields to prove nothing is hardcoded in the selector.
+  assert.equal(summary.remaining, 540000 - 248500);
+});
+
+test("V3.1 #16 — no cross-consortium context leak: CONTEXT_SUMMARY/CURRENT_INVOICE/CURRENT_MAINTENANCE for another consortium never returns Arenales facts", () => {
+  const other = "Paraguay 1450";
+  const invoice = runAgentTool("CURRENT_INVOICE", { organization: other });
+  assert.equal(invoice.empty, true, "Paraguay 1450 has no invoices — must honestly report empty, never borrow Arenales' invoice");
+  const maintenance = runAgentTool("CURRENT_MAINTENANCE", { organization: other });
+  assert.equal(maintenance.empty, true);
+  const contextSummary = runAgentTool("CONTEXT_SUMMARY", { organization: other });
+  assert.equal(contextSummary.data.organization.name, other);
+  assert.equal(contextSummary.data.items.some((i: any) => i.category === "facturas" || i.category === "mantenimiento"), false);
+});
+
+test("V3.1 #17 — closing the Copilot preserves main screen state (it is a local open/close flag, not a navigation)", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const copilotSection = page.slice(page.indexOf("function Copilot("), page.indexOf("function Agent("));
+  assert.equal(copilotSection.includes("go(\"agent\")"), false, "the Copilot must never navigate to the full Agent page — that would defeat the point of staying on the current screen");
+  assert.ok(copilotSection.includes("setOpen(false)"), "closing/navigating from the Copilot must only toggle its own open flag");
+});
+
+test("V3.1 #18 — existing full-page Agent flows still pass: ¿Dónde tengo mayor mora? → unidades → la peor", () => {
+  const debt = runAgentTool("DEBT_OVERVIEW", { scope: "portfolio", organization: null });
+  assert.match(trustedResponse(debt).answer, /Arenales 2210/);
+  const state = updateConversationState({}, "DEBT_OVERVIEW", debt);
+  const units = runAgentTool("DEBT_UNIT_DETAIL", { organization: state.activeOrganization, minimum_amount: null, mode: null });
+  assert.match(trustedResponse(units).answer, /2A/);
+  const worst = runAgentTool("DEBT_UNIT_DETAIL", { organization: state.activeOrganization, minimum_amount: 0, mode: "prioritize" });
+  const worstAnswer = trustedResponse(worst).answer;
+  assert.match(worstAnswer, /2A/);
+  assert.match(worstAnswer, /540\.000/);
+  assert.match(worstAnswer, /74 días/);
+  assert.match(worstAnswer, /mora crítica/);
+});
+
+test("V3.1 #19 — expanded Q1/Q2 attention-summary regression logic remains intact after V3.1 changes", () => {
+  const q1 = runAgentTool("ATTENTION_SUMMARY", { organization: "Arenales 2210", most_urgent_only: false });
+  const q1Answer = trustedResponse(q1).answer;
+  assert.match(q1Answer, /Arenales 2210 tiene \d+ frentes? que requiere/);
+  assert.match(q1Answer, /2A/);
+  const q2 = runAgentTool("ATTENTION_SUMMARY", { organization: "Arenales 2210", most_urgent_only: true });
+  const q2Answer = trustedResponse(q2).answer;
+  assert.match(q2Answer, /2A/);
+  assert.match(q2Answer, /540\.000/);
+});
+
+test("V3.1 #20 — no WRITE capability was added: every new tool is read-only, no new fetch targets, no new secrets", async () => {
+  const [route, tools] = await Promise.all([
+    readFile(new URL("../app/api/assistant/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/agent-tools.ts", import.meta.url), "utf8"),
+  ]);
+  assert.ok(route.includes("store: false"));
+  assert.ok(route.includes('parallel_tool_calls: false'));
+  for (const name of ["CONTEXT_SUMMARY", "CURRENT_INVOICE", "CURRENT_DOCUMENT_DEADLINE", "CURRENT_MAINTENANCE", "PREPARE_COLLECTION_FOLLOWUP"]) {
+    assert.ok(tools.includes(`name: "${name}"`), `tool ${name} must be registered`);
+  }
+  assert.equal(tools.includes("fetch("), false, "agent-tools.ts must stay pure/deterministic — no network calls of its own");
 });

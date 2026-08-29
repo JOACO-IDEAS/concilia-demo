@@ -27,6 +27,11 @@ export const agentTools = [
   { type: "function", name: "PAYMENT_EVIDENCE", description: "Evidencia y motivo de propuesta para un pago o candidato.", strict: true, parameters: { type: "object", additionalProperties: false, properties: { reference: { type: ["string", "null"] }, organization: { type: ["string", "null"] }, unit: { type: ["string", "null"] } }, required: ["reference", "organization", "unit"] } },
   { type: "function", name: "DOCUMENT_PAYMENT_STATUS", description: "Consulta si existe una relación explícita entre el documento activo y un pago.", strict: true, parameters: { type: "object", additionalProperties: false, properties: { document: { type: ["string", "null"] } }, required: ["document"] } },
   { type: "function", name: "ATTENTION_SUMMARY", description: "Resumen priorizado de todo lo que requiere atención en un consorcio: mora crítica, documentos, facturas, conciliación y mantenimiento. Usar most_urgent_only=true cuando preguntan específicamente qué es lo más urgente/prioritario.", strict: true, parameters: { type: "object", additionalProperties: false, properties: { organization: { type: ["string", "null"] }, most_urgent_only: { type: "boolean" } }, required: ["organization", "most_urgent_only"] } },
+  { type: "function", name: "CONTEXT_SUMMARY", description: "Resumen operativo general de un consorcio (cobranza, deuda, frentes abiertos). Usar para 'resumime este consorcio' o similar.", strict: true, parameters: { type: "object", additionalProperties: false, properties: { organization: { type: ["string", "null"] } }, required: ["organization"] } },
+  { type: "function", name: "CURRENT_INVOICE", description: "La factura/obligación con proveedor más urgente (pendiente o próxima a vencer) de un consorcio. Usar para 'la factura pendiente de este consorcio'.", strict: true, parameters: { type: "object", additionalProperties: false, properties: { organization: { type: ["string", "null"] } }, required: ["organization"] } },
+  { type: "function", name: "CURRENT_DOCUMENT_DEADLINE", description: "El documento del consorcio con el vencimiento futuro más próximo. Usar para '¿cuál vence primero?'.", strict: true, parameters: { type: "object", additionalProperties: false, properties: { organization: { type: ["string", "null"] } }, required: ["organization"] } },
+  { type: "function", name: "CURRENT_MAINTENANCE", description: "Estado de mantenimiento de los activos (ascensores) de un consorcio: próximo mantenimiento, proveedor.", strict: true, parameters: { type: "object", additionalProperties: false, properties: { organization: { type: ["string", "null"] } }, required: ["organization"] } },
+  { type: "function", name: "PREPARE_COLLECTION_FOLLOWUP", description: "Prepara (sin enviar) un borrador de seguimiento de cobranza para una unidad en mora. Si no se especifica unidad, usa la unidad con mora crítica del consorcio.", strict: true, parameters: { type: "object", additionalProperties: false, properties: { organization: { type: ["string", "null"] }, unit: { type: ["string", "null"] } }, required: ["organization", "unit"] } },
 ] as const;
 
 const norm = (value: unknown) => String(value ?? "").toLocaleLowerCase("es-AR").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -38,7 +43,8 @@ const needsDocumentAttention = (status: string) => norm(status).includes("vence"
 
 export function resolveToolArgs(name: string, raw: Json, state: ConversationState): Json {
   const args = { ...raw };
-  if (["RECONCILIATION_REVIEW", "DEBT_UNIT_DETAIL", "ORGANIZATION_LOOKUP", "DOCUMENT_LOOKUP", "UPCOMING_DOCUMENTS", "PAYMENT_EVIDENCE", "ATTENTION_SUMMARY"].includes(name) && !args.organization) args.organization = state.activeOrganization ?? null;
+  if (["RECONCILIATION_REVIEW", "DEBT_UNIT_DETAIL", "ORGANIZATION_LOOKUP", "DOCUMENT_LOOKUP", "UPCOMING_DOCUMENTS", "PAYMENT_EVIDENCE", "ATTENTION_SUMMARY", "CONTEXT_SUMMARY", "CURRENT_INVOICE", "CURRENT_DOCUMENT_DEADLINE", "CURRENT_MAINTENANCE", "PREPARE_COLLECTION_FOLLOWUP"].includes(name) && !args.organization) args.organization = state.activeOrganization ?? null;
+  if (name === "PREPARE_COLLECTION_FOLLOWUP" && !args.unit) args.unit = state.activeUnit ?? null;
   if (name === "DEBT_OVERVIEW" && args.scope === "active_organization" && !args.organization) args.organization = state.activeOrganization ?? null;
   if (name === "DEBT_UNIT_DETAIL" && args.minimum_amount == null && state.lastKind === "debt_units") args.minimum_amount = state.lastMinimumAmount ?? null;
   if (name === "RECONCILIATION_LOOKUP" && !args.reference && state.activePayment) args.reference = state.activePayment;
@@ -95,6 +101,19 @@ export function runAgentTool(name: string, args: Json): ToolResult {
     case "PAYMENT_EVIDENCE": { const p = demoData.reconciliation.featuredPayment; const referenceMatches = !args.reference || includes(p.reference, args.reference); const candidate = p.candidates.find((c) => includes(c.consortium, args.organization) && includes(c.unit, args.unit)) || p.candidates[0]; return { kind: "evidence", args, data: referenceMatches ? { payment: { amount: p.amount, reference: p.reference, receivedAt: p.receivedAt }, candidate, alternatives: p.candidates.length, requiresHumanConfirmation: p.candidates.length > 1 } : null, empty: !referenceMatches }; }
     case "DOCUMENT_PAYMENT_STATUS": return { kind: "document_payment_status", args, data: { document: args.document || null, relationAvailable: false } };
     case "ATTENTION_SUMMARY": { const organization = orgByName(args.organization); if (!organization) return { kind: "needs_context", args, data: { missing: "organization" }, empty: true }; const items = demoSelectors.buildingAttentionItems(organization.name); const selected = args.most_urgent_only ? items.slice(0, 1) : items; return { kind: "attention_summary", args: { ...args, organization: organization.name }, data: { organization: organization.name, mostUrgentOnly: !!args.most_urgent_only, items: selected, totalCategories: items.length }, empty: items.length === 0 }; }
+    case "CONTEXT_SUMMARY": { const organization = orgByName(args.organization); if (!organization) return { kind: "needs_context", args, data: { missing: "organization" }, empty: true }; const items = demoSelectors.buildingAttentionItems(organization.name); return { kind: "context_summary", args: { ...args, organization: organization.name }, data: { organization, items }, empty: false }; }
+    case "CURRENT_INVOICE": { const organization = orgByName(args.organization); if (!organization) return { kind: "needs_context", args, data: { missing: "organization" }, empty: true }; const { pendientes, proximas } = demoSelectors.invoiceStatusGroups(organization.name); const invoice = pendientes[0] || proximas[0] || null; return { kind: "current_invoice", args: { ...args, organization: organization.name }, data: invoice ? { organization: organization.name, invoice } : null, empty: !invoice }; }
+    case "CURRENT_DOCUMENT_DEADLINE": { const organization = orgByName(args.organization); if (!organization) return { kind: "needs_context", args, data: { missing: "organization" }, empty: true }; const docs = demoSelectors.documentsSortedByUpcomingDeadline(organization.name); const document = docs[0] || null; return { kind: "document_deadline", args: { ...args, organization: organization.name }, data: document ? { organization: organization.name, document } : null, empty: !document }; }
+    case "CURRENT_MAINTENANCE": { const organization = orgByName(args.organization); if (!organization) return { kind: "needs_context", args, data: { missing: "organization" }, empty: true }; const assets = demoData.maintenanceAssets.filter((a) => a.consortium === organization.name); return { kind: "current_maintenance", args: { ...args, organization: organization.name }, data: assets.length ? { organization: organization.name, asset: assets[0] } : null, empty: !assets.length }; }
+    case "PREPARE_COLLECTION_FOLLOWUP": {
+      const organization = orgByName(args.organization);
+      if (!organization) return { kind: "needs_context", args, data: { missing: "organization" }, empty: true };
+      let unitRecord = args.unit ? demoData.collections.overdue.find((u) => u.consortium === organization.name && includes(u.unit, args.unit)) : null;
+      if (!unitRecord) { const moraItem = demoSelectors.buildingAttentionItems(organization.name).find((item) => item.category === "mora"); unitRecord = moraItem?.unit ?? null; }
+      if (!unitRecord) return { kind: "needs_context", args, data: { missing: "unit" }, empty: true };
+      const message = demoSelectors.buildFollowupMessage(unitRecord);
+      return { kind: "collection_followup", args: { ...args, organization: organization.name, unit: unitRecord.unit }, data: { organization: organization.name, unit: unitRecord.unit, owner: unitRecord.owner, outstanding: unitRecord.outstanding, days: unitRecord.days, status: unitRecord.status, message, playbook: demoData.collectionPlaybook }, empty: false };
+    }
     default: return { kind: "unsupported", args, data: null, empty: true };
   }
 }
@@ -110,6 +129,11 @@ export function updateConversationState(previous: ConversationState, tool: strin
   if (data?.payments?.[0]?.reference) { next.activePayment = data.payments[0].reference; next.activeUnit = data.payments[0].candidates?.[0]?.unit || next.activeUnit; next.activeOrganization = data.payments[0].candidates?.[0]?.consortium || next.activeOrganization; }
   if (data?.candidate?.unit) next.activeUnit = data.candidate.unit;
   if (data?.documents?.[0]) { next.activeDocument = data.documents[0].number || data.documents[0].type; next.activeProvider = data.documents[0].provider; next.activeOrganization = data.documents[0].consortium; }
+  if (typeof data?.unit === "string") next.activeUnit = data.unit;
+  // TASK V3.1 — "Prepará el seguimiento" tras "¿Qué es lo más urgente?" debe resolver
+  // a LA MISMA unidad crítica que el Agente acaba de nombrar, sin que el usuario
+  // tenga que repetirla.
+  if (result.kind === "attention_summary" && data?.items?.[0]?.category === "mora") next.activeUnit = data.items[0].unit.unit;
   if (result.kind === "debt_units") next.lastMinimumAmount = data.minimumAmount;
   return next;
 }
@@ -151,11 +175,20 @@ export function trustedResponse(result: ToolResult) {
       const lines = d.items.map((item: any) => describeAttentionItem(item));
       return { answer: `${d.organization} tiene ${d.items.length} ${d.items.length === 1 ? "frente" : "frentes"} que requiere${d.items.length === 1 ? "" : "n"} atención: ${lines.join("; ")}.`, suggestions: ["¿Qué es lo más urgente?", "¿Dónde tengo mayor mora?", `¿Cómo está ${d.organization}?`] };
     }
+    case "context_summary": {
+      const org = d.organization;
+      const lines = d.items.map((item: any) => describeAttentionItem(item));
+      return { answer: `${org.name}: ${org.collectionRate}% de cobranza, ${money(org.debt)} pendientes en ${org.pending} unidades.${d.items.length ? ` Frentes abiertos: ${lines.join("; ")}.` : " Sin frentes abiertos registrados."}`, suggestions: ["¿Qué es lo más urgente?", "¿Cuáles son las unidades en mora?", "¿Qué documentos vencen pronto?"] };
+    }
+    case "current_invoice": return { answer: `${d.invoice.provider}\n${d.invoice.concept}\n${money(d.invoice.amount)}\nVence ${d.invoice.dueDate}\n${d.invoice.status}`, suggestions: ["Ver factura", "¿Qué es lo más urgente?", `¿Cómo está ${d.organization}?`] };
+    case "document_deadline": return { answer: `El próximo vencimiento es ${d.document.type} de ${d.document.provider}, el ${d.document.date} (${d.document.status.toLowerCase()}).`, suggestions: ["¿Hay algún documento que venza pronto?", `¿Cómo está ${d.organization}?`] };
+    case "current_maintenance": return { answer: `${d.asset.name}\n${d.asset.status}\nPróximo mantenimiento: ${d.asset.nextMaintenance}\nProveedor: ${d.asset.provider}`, suggestions: ["¿Cuándo fue el último mantenimiento?", `¿Cómo está ${d.organization}?`] };
+    case "collection_followup": return { answer: `Preparé un borrador de seguimiento para ${d.organization} · Unidad ${d.unit} (${money(d.outstanding)}, ${d.days} días, ${d.status.toLowerCase()}). No se enviará hasta que lo apruebes.`, suggestions: ["Ver borrador", "¿Qué es lo más urgente?", `¿Cómo está ${d.organization}?`] };
     default: return { answer: "Todavía no puedo consultar ese detalle.", suggestions: ["¿Qué requiere mi atención hoy?", "¿Dónde tengo mayor mora?"] };
   }
 }
 
 export function trustedPresentation(result: ToolResult) {
-  const actionByKind: Record<string, { label: string; view: string } | null> = { portfolio: { label: "Ver inicio", view: "home" }, today: { label: "Ver prioridades", view: "home" }, reconciliation: { label: "Ver conciliaciones", view: "reconciliation" }, payment: { label: "Revisar pago", view: "resolution" }, evidence: { label: "Ver evidencia", view: "evidence" }, debt: { label: "Ver morosidad", view: "debt" }, debt_units: { label: "Ver morosidad", view: "debt" }, organization: { label: "Ver consorcio", view: "consortium" }, unit: { label: "Ver consorcio", view: "consortium" }, document: { label: "Ver documentos", view: "documents" }, documents_upcoming: { label: "Ver documentos", view: "documents" }, attention_summary: { label: "Ver consorcio", view: "consortium" } };
+  const actionByKind: Record<string, { label: string; view: string } | null> = { portfolio: { label: "Ver inicio", view: "home" }, today: { label: "Ver prioridades", view: "home" }, reconciliation: { label: "Ver conciliaciones", view: "reconciliation" }, payment: { label: "Revisar pago", view: "resolution" }, evidence: { label: "Ver evidencia", view: "evidence" }, debt: { label: "Ver morosidad", view: "debt" }, debt_units: { label: "Ver morosidad", view: "debt" }, organization: { label: "Ver consorcio", view: "consortium" }, unit: { label: "Ver consorcio", view: "consortium" }, document: { label: "Ver documentos", view: "documents" }, documents_upcoming: { label: "Ver documentos", view: "documents" }, attention_summary: { label: "Ver consorcio", view: "consortium" }, context_summary: { label: "Ver consorcio", view: "consortium" }, current_invoice: { label: "Ver factura", view: "invoices" }, document_deadline: { label: "Ver documentos", view: "documents" }, current_maintenance: { label: "Ver mantenimiento", view: "maintenance" }, collection_followup: { label: "Ver borrador", view: "collection" } };
   return { topic: result.kind, result: result.data, action: actionByKind[result.kind] ?? null };
 }

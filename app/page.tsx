@@ -190,6 +190,27 @@ const featuredSignalSuffix = featuredPayment.signal.match(/\d+$/)?.[0] ?? "";
 const consortia = demoData.consortia.map((item) => ({ name: item.name, units: item.units, collectionRate: item.collectionRate, debt: formatMoney(item.debt), open: item.pending, status: item.status }));
 const documents = demoData.documents.map((item, index) => ({ id: `doc-${index}`, type: item.type, title: item.provider, period: item.date, place: item.consortium, amount: "amount" in item && typeof item.amount === "number" ? formatMoney(item.amount) : "—", status: item.status }));
 
+// TASK V3.1 — Contexto explícito para el Copilot flotante: estructurado y
+// derivado de la navegación real (view/selectedOrganization), nunca inferido
+// por el LLM a partir de prosa. "Módulos" ambiente (Documentos/Morosidad) no
+// están recortados por consorcio en la UI, pero conservan igual el último
+// consorcio que el administrador miró — es un dato real, no inventado.
+type UIModule = "consorcio" | "facturas" | "documentos" | "mantenimiento" | "morosidad" | "conciliacion" | null;
+type UIContext = { consortiumId: string | null; module: UIModule; maintenanceAssetId: string | null };
+const MODULE_BY_VIEW: Partial<Record<View, UIModule>> = { consortium: "consorcio", invoices: "facturas", documents: "documentos", maintenance: "mantenimiento", debt: "morosidad", reconciliation: "conciliacion" };
+function computeUIContext(view: View, selectedOrganization: string): UIContext {
+  const module = MODULE_BY_VIEW[view] ?? null;
+  if (!module) return { consortiumId: null, module: null, maintenanceAssetId: null };
+  const asset = module === "mantenimiento" ? demoData.maintenanceAssets.find((a) => a.consortium === selectedOrganization) : null;
+  return { consortiumId: selectedOrganization, module, maintenanceAssetId: asset?.id ?? null };
+}
+const CONTEXT_MODULE_LABEL: Record<Exclude<UIModule, null>, string> = { consorcio: "Consorcio 360", facturas: "Facturas", documentos: "Documentos", mantenimiento: "Mantenimiento", morosidad: "Morosidad", conciliacion: "Conciliación" };
+
+// TASK V3.1 — estado del loop demostrativo de cobranza/WhatsApp. Vive en
+// ProductDemo (no en el Copilot ni en Debt) porque se dispara desde varios
+// puntos de entrada y debe sobrevivir mientras el administrador navega.
+type CollectionState = { open: boolean; approved: boolean; receiptShown: boolean };
+
 export default function ProductDemo() {
   const [view, setView] = useState<View>("home");
   const [resolved, setResolved] = useState(false);
@@ -202,6 +223,8 @@ export default function ProductDemo() {
   const [importOpen, setImportOpen] = useState(false);
   const [resolvedUnit, setResolvedUnit] = useState(featuredPayment.candidates[0].unit);
   const [pendingAgentPrompt, setPendingAgentPrompt] = useState<string | null>(null);
+  const [copilotOpen, setCopilotOpen] = useState(false);
+  const [collection, setCollection] = useState<CollectionState>({ open: false, approved: false, receiptShown: false });
   useEffect(() => {
     const engaged = window.setTimeout(() => trackShowroomEvent("engagement_30s"), 30_000);
     return () => window.clearTimeout(engaged);
@@ -234,9 +257,13 @@ export default function ProductDemo() {
     setSelectedOrganization("Arenales 2210");
     setImportOpen(false);
     setPendingAgentPrompt(null);
+    setCopilotOpen(false);
+    setCollection({ open: false, approved: false, receiptShown: false });
     setView("home");
     notify("Demo reiniciada · estado inicial restaurado");
   };
+  const openCollectionFollowup = () => setCollection((c) => ({ ...c, open: true }));
+  const uiContext = computeUIContext(view, selectedOrganization);
   const titles: Record<View, [string, string]> = {
     home: [
       "Buenas tardes, Joaquín",
@@ -400,7 +427,7 @@ export default function ProductDemo() {
             <Reconciliation resolved={resolved} resolvedUnit={resolvedUnit} go={go} />
           )}
           {view === "resolution" && <Resolution resolved={resolved} resolvedUnit={resolvedUnit} confirm={confirm} go={go} />}
-          {view === "debt" && <Debt />}
+          {view === "debt" && <Debt openCollectionFollowup={openCollectionFollowup} />}
           {view === "consortia" && <Consortia go={go} select={(name) => { setSelectedOrganization(name); go("consortium"); }} />}
           {view === "consortium" && (
             <Consortium
@@ -408,13 +435,14 @@ export default function ProductDemo() {
               organizationName={selectedOrganization}
               resolved={resolved}
               askAgent={(prompt) => { setPendingAgentPrompt(prompt); go("agent"); }}
+              openCollectionFollowup={openCollectionFollowup}
             />
           )}
           {view === "documents" && <Documents open={setDoc} />}
           {view === "invoices" && <Invoices organizationName={selectedOrganization} go={go} />}
           {view === "maintenance" && <Maintenance organizationName={selectedOrganization} go={go} />}
           {view === "evidence" && <EvidenceFlow go={go} resolved={resolved} />}
-          {view === "agent" && <Agent go={go} selectOrganization={setSelectedOrganization} pendingPrompt={pendingAgentPrompt} clearPendingPrompt={() => setPendingAgentPrompt(null)} />}
+          {view === "agent" && <Agent go={go} selectOrganization={setSelectedOrganization} pendingPrompt={pendingAgentPrompt} clearPendingPrompt={() => setPendingAgentPrompt(null)} openCollectionFollowup={openCollectionFollowup} />}
           {view === "settings" && <Settings />}
         </section>
       </main>
@@ -446,6 +474,24 @@ export default function ProductDemo() {
           </span>
           {toast}
         </div>
+      )}
+      <Copilot
+        open={copilotOpen}
+        setOpen={setCopilotOpen}
+        context={uiContext}
+        go={go}
+        selectOrganization={setSelectedOrganization}
+        openCollectionFollowup={openCollectionFollowup}
+        hidden={view === "agent"}
+      />
+      {collection.open && (
+        <CollectionFollowup
+          state={collection}
+          setState={setCollection}
+          close={() => setCollection((c) => ({ ...c, open: false }))}
+          go={go}
+          notify={notify}
+        />
       )}
     </div>
   );
@@ -1216,7 +1262,7 @@ function Receipt() {
   );
 }
 
-function Debt() {
+function Debt({ openCollectionFollowup }: { openCollectionFollowup: () => void }) {
   const [filter, setFilter] = useState("Todas");
   const [detail, setDetail] = useState<(typeof debts)[number] | null>(null);
   const debts = demoData.collections.overdue.map((item) => ({ unit: item.unit, place: item.consortium, owner: item.owner, outstanding: item.outstanding, amount: formatMoney(item.outstanding), days: item.days, lastContact: item.lastContact, promise: item.promise, priority: item.status, tone: item.days > 60 ? "danger" : item.days > 30 ? "warning" : "neutral" }));
@@ -1275,7 +1321,7 @@ function Debt() {
             </article>
           ))}
       </section>
-      {detail && <DebtDetail item={detail} close={() => setDetail(null)} />}
+      {detail && <DebtDetail item={detail} close={() => setDetail(null)} openCollectionFollowup={openCollectionFollowup} />}
     </div>
   );
 }
@@ -1283,9 +1329,11 @@ function Debt() {
 function DebtDetail({
   item,
   close,
+  openCollectionFollowup,
 }: {
   item: { unit: string; place: string; owner: string; amount: string; days: number; lastContact: string; promise: string | null; priority: string; tone: string };
   close: () => void;
+  openCollectionFollowup: () => void;
 }) {
   return (
     <div className="modal-overlay" onClick={close}>
@@ -1326,6 +1374,182 @@ function DebtDetail({
               <dd>{item.promise || "Sin promesa registrada"}</dd>
             </div>
           </dl>
+        </div>
+        <footer>
+          <button className="secondary" onClick={close}>
+            Cerrar
+          </button>
+          {/* TASK V3.1 — EPIC B: acotado al caso canónico de la demo (Arenales
+             2210 · 2A) para no convertir esto en un CRM de cobranza general. */}
+          {item.place === "Arenales 2210" && item.unit === "2A" && (
+            <button className="primary" onClick={() => { close(); openCollectionFollowup(); }}>
+              Preparar seguimiento
+              <Icon name="arrow" size={14} />
+            </button>
+          )}
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+// TASK V3.1 — EPIC B: loop demostrativo de cobranza/WhatsApp. Acotado al caso
+// canónico Arenales 2210 · 2A · María Fernández — reutiliza exactamente esos
+// datos (nunca inventa una persona/unidad nueva). Nada de esto envía nada:
+// cada transición es un cambio de estado local explícito, gatillado por un
+// click humano ("Aprobar seguimiento", "Simular respuesta del residente").
+function CollectionFollowup({
+  state,
+  setState,
+  close,
+  go,
+  notify,
+}: {
+  state: CollectionState;
+  setState: (updater: (s: CollectionState) => CollectionState) => void;
+  close: () => void;
+  go: (v: View) => void;
+  notify: (text: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [paymentLinkOpen, setPaymentLinkOpen] = useState(false);
+  const unit = demoData.collections.overdue.find((u) => u.consortium === "Arenales 2210" && u.unit === "2A")!;
+  const [draftMessage, setDraftMessage] = useState(() => demoSelectors.buildFollowupMessage(unit));
+  const receiptSummary = demoSelectors.followupReceiptSummary(unit);
+
+  const copyPaymentLink = async () => {
+    try {
+      await navigator.clipboard.writeText("Link de demostración — no es una URL real, no procesa pagos.");
+      notify("Link de demostración copiado");
+    } catch {
+      notify("No se pudo copiar en este navegador");
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={close}>
+      <div className="collection-modal" onClick={(e) => e.stopPropagation()}>
+        <header>
+          <div>
+            <p>SEGUIMIENTO DE COBRANZA</p>
+            <h2>{unit.consortium} · Unidad {unit.unit}</h2>
+          </div>
+          <button onClick={close} aria-label="Cerrar">
+            <Icon name="close" />
+          </button>
+        </header>
+        <div className="collection-body">
+          <div className="collection-summary">
+            <strong>{formatMoney(unit.outstanding)}</strong>
+            <span>{unit.days} días</span>
+            <Status tone="danger">{unit.status}</Status>
+          </div>
+          <p className="collection-resident">
+            <Icon name="user" size={13} /> {unit.owner}
+          </p>
+
+          <div className="collection-plan">
+            <p>PLAN SUGERIDO · SECUENCIA DEMOSTRATIVA</p>
+            <div className="collection-stages">
+              {demoData.collectionPlaybook.map((stage) => (
+                <div key={stage.day} className={`collection-stage ${stage.status}`}>
+                  <span>Día {stage.day}</span>
+                  <b>{stage.label}</b>
+                  <small>{stage.status === "completado" ? "Completado" : stage.status === "pendiente" ? "Pendiente" : "Próximo"}</small>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {!state.approved ? (
+            <div className="collection-draft">
+              <div className="collection-draft-head">
+                <p>MENSAJE PREPARADO</p>
+                <Status tone="warning">Requiere aprobación</Status>
+              </div>
+              {editing ? (
+                <textarea value={draftMessage} onChange={(e) => setDraftMessage(e.target.value)} rows={4} />
+              ) : (
+                <blockquote>{draftMessage}</blockquote>
+              )}
+              <div className="collection-draft-actions">
+                <button className="secondary" onClick={() => setEditing((v) => !v)}>
+                  {editing ? "Listo" : "Editar"}
+                </button>
+                <button className="primary" onClick={() => setState((s) => ({ ...s, approved: true }))}>
+                  Aprobar seguimiento
+                </button>
+              </div>
+              <p className="import-disclaimer">
+                <Icon name="info" size={12} /> Preparado. No se enviará hasta que lo apruebes.
+              </p>
+            </div>
+          ) : (
+            <div className="collection-whatsapp">
+              <div className="collection-whatsapp-head">
+                <Icon name="whatsapp" size={14} />
+                <b>WhatsApp · Demostración</b>
+              </div>
+              <div className="collection-thread">
+                <div className="collection-bubble admin">{draftMessage}</div>
+                {state.receiptShown && (
+                  <div className="collection-bubble resident">
+                    Hola, ya pagué. Te mando el comprobante.
+                    <span className="file-chip">
+                      <Icon name="document" size={13} /> comprobante_4812.pdf
+                    </span>
+                  </div>
+                )}
+              </div>
+              {!state.receiptShown ? (
+                <button className="secondary" onClick={() => setState((s) => ({ ...s, receiptShown: true }))}>
+                  Simular respuesta del residente
+                </button>
+              ) : (
+                <div className="collection-receipt">
+                  <p>NUEVO COMPROBANTE RECIBIDO</p>
+                  <div className="collection-receipt-row">
+                    <span>Pago parcial recibido</span>
+                    <b>{formatMoney(receiptSummary.received)}</b>
+                  </div>
+                  <div className="collection-receipt-row">
+                    <span>Saldo restante</span>
+                    <b>{formatMoney(receiptSummary.remaining)}</b>
+                  </div>
+                  <p className="import-disclaimer">
+                    <Icon name="info" size={12} /> Comprobante por {formatMoney(receiptSummary.received)}: no salda el total de {formatMoney(unit.outstanding)} pendientes.
+                  </p>
+                  <button
+                    className="primary"
+                    onClick={() => {
+                      close();
+                      go("evidence");
+                    }}
+                  >
+                    Ver en Conciliación
+                    <Icon name="arrow" size={14} />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {!paymentLinkOpen ? (
+            <button className="text" onClick={() => setPaymentLinkOpen(true)}>
+              Preparar solicitud de pago
+            </button>
+          ) : (
+            <div className="collection-payment-link">
+              <p>SOLICITUD DE PAGO · DEMOSTRACIÓN</p>
+              <b>{unit.consortium} · {unit.unit}</b>
+              <span>{formatMoney(unit.outstanding)}</span>
+              <div className="masked-link">concilia.demo/pago/••••••••</div>
+              <button className="secondary" onClick={copyPaymentLink}>
+                Copiar link de demostración
+              </button>
+              <small>Link simulado para esta demo</small>
+            </div>
+          )}
         </div>
         <footer>
           <button className="secondary" onClick={close}>
@@ -1426,7 +1650,7 @@ function attentionHeadline(item: ReturnType<typeof demoSelectors.buildingAttenti
   }
 }
 
-function Consortium({ go, organizationName, resolved, askAgent }: { go: (v: View) => void; organizationName: string; resolved: boolean; askAgent: (prompt: string) => void }) {
+function Consortium({ go, organizationName, resolved, askAgent, openCollectionFollowup }: { go: (v: View) => void; organizationName: string; resolved: boolean; askAgent: (prompt: string) => void; openCollectionFollowup: () => void }) {
   const [tab, setTab] = useState("Resumen");
   const organization = demoData.consortia.find((item) => item.name === organizationName) || demoData.consortia[0];
   const organizationDocuments = demoData.documents.filter((item) => item.consortium === organization.name);
@@ -1482,15 +1706,23 @@ function Consortium({ go, organizationName, resolved, askAgent }: { go: (v: View
               <div className="attention-items">
                 {attentionItems.map((item) => {
                   const { title, detail, tone } = attentionHeadline(item);
+                  const offerFollowup = item.category === "mora" && item.unit?.consortium === "Arenales 2210" && item.unit?.unit === "2A";
                   return (
-                    <button className={`attention-item ${tone}`} key={item.category} onClick={() => go(item.view as View)}>
-                      <span className="attention-dot" />
-                      <span>
-                        <b>{title}</b>
-                        <small>{detail}</small>
-                      </span>
-                      <Icon name="arrow" size={14} />
-                    </button>
+                    <div className={`attention-item ${tone}${offerFollowup ? " with-action" : ""}`} key={item.category}>
+                      <button className="attention-item-main" onClick={() => go(item.view as View)}>
+                        <span className="attention-dot" />
+                        <span>
+                          <b>{title}</b>
+                          <small>{detail}</small>
+                        </span>
+                        <Icon name="arrow" size={14} />
+                      </button>
+                      {offerFollowup && (
+                        <button className="attention-item-followup" onClick={() => openCollectionFollowup()}>
+                          Preparar seguimiento
+                        </button>
+                      )}
+                    </div>
                   );
                 })}
               </div>
@@ -1887,20 +2119,214 @@ type ChatMessage = {
   role: "user" | "assistant";
   text: string;
   topic?: string;
-  action?: { label: string; view: View } | null;
+  // "collection" no es una View real de navegación: es el escape hatch que usan
+  // tanto el Agente de página completa como el Copilot flotante para abrir el
+  // borrador de seguimiento de cobranza en lugar de navegar.
+  action?: { label: string; view: View | "collection" } | null;
   suggestions?: string[];
   result?: unknown;
 };
+type AssistantReply =
+  | { ok: true; answer: string; topic: string; action: { label: string; view: View | "collection" } | null; suggestions: string[]; result: unknown; state: Record<string, unknown> }
+  | { ok: false; error: string };
+// TASK V3.1 — punto único de contacto con /api/assistant, reutilizado por el
+// Agente de página completa y el Copilot flotante: misma arquitectura
+// determinística, ningún dato ni lógica duplicada entre las dos superficies.
+async function sendToAssistant(conversation: { role: "user" | "assistant"; text: string }[], state: Record<string, unknown>, sessionId: string): Promise<AssistantReply> {
+  try {
+    const response = await fetch("/api/assistant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: conversation.map((m) => ({ role: m.role, content: m.text })),
+        state,
+        sessionId,
+      }),
+    });
+    const data = (await response.json()) as {
+      error?: string;
+      answer?: string;
+      topic?: string;
+      suggested_questions?: string[];
+      action?: { label: string; view: View | "collection" } | null;
+      result?: unknown;
+      state?: Record<string, unknown>;
+    };
+    if (!response.ok || !data.answer) throw new Error(data.error || "No pude consultar el Agente.");
+    return { ok: true, answer: data.answer, topic: data.topic || "general", action: data.action || null, suggestions: data.suggested_questions || [], result: data.result, state: data.state || state };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "No pude consultar el Agente en este momento." };
+  }
+}
+
+// TASK V3.1 — EPIC A: Copiloto flotante. Misma arquitectura determinística que
+// el Agente de página completa (sendToAssistant / /api/assistant / agent-tools),
+// nunca un segundo motor: sólo una presentación más compacta que no navega y
+// mantiene la pantalla actual visible.
+function Copilot({
+  open,
+  setOpen,
+  context,
+  go,
+  selectOrganization,
+  openCollectionFollowup,
+  hidden,
+}: {
+  open: boolean;
+  setOpen: (open: boolean) => void;
+  context: UIContext;
+  go: (v: View) => void;
+  selectOrganization: (name: string) => void;
+  openCollectionFollowup: () => void;
+  hidden: boolean;
+}) {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [conversationState, setConversationState] = useState<Record<string, unknown>>({});
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [sessionId] = useState(() => typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `copilot-${Date.now()}`);
+
+  // El Copilot conoce el consorcio actual porque la UI se lo dice de forma
+  // explícita y estructurada (context.consortiumId) — nunca porque el LLM
+  // adivine el estado de la página a partir de prosa.
+  useEffect(() => {
+    if (!open) return;
+    setConversationState((cs) => ({ ...cs, activeOrganization: context.consortiumId ?? (cs.activeOrganization as string | null) ?? null }));
+  }, [open, context.consortiumId]);
+
+  if (hidden) return null;
+
+  const suggestionsFor = (): string[] => {
+    if (context.module === "facturas") return ["Traeme la factura pendiente de este consorcio.", "¿Qué es lo más urgente?"];
+    if (context.module === "documentos") return ["¿Cuál vence primero?", "¿Qué es lo más urgente?"];
+    if (context.module === "mantenimiento") return ["¿Cuándo es el próximo mantenimiento?", "¿Qué es lo más urgente?"];
+    if (context.module === "morosidad") return ["¿Qué resolverías primero?", "¿Dónde tengo mayor mora?"];
+    if (context.module === "consorcio") return ["Resumime este consorcio.", "¿Qué resolverías primero?"];
+    return ["¿Qué requiere mi atención hoy?", "¿Dónde tengo mayor mora?"];
+  };
+
+  const send = async (text = input) => {
+    const q = text.trim();
+    if (!q || loading) return;
+    trackShowroomEvent("copilot_question_sent");
+    const conversation = [...messages, { role: "user" as const, text: q }];
+    setMessages(conversation);
+    setInput("");
+    setLoading(true);
+    const reply = await sendToAssistant(conversation, conversationState, sessionId);
+    if (reply.ok) {
+      setMessages((m) => [...m, { role: "assistant", text: reply.answer, topic: reply.topic, action: reply.action, suggestions: reply.suggestions, result: reply.result }]);
+      setConversationState(reply.state);
+    } else {
+      setMessages((m) => [...m, { role: "assistant", text: reply.error, suggestions: ["Reintentar"] }]);
+    }
+    setLoading(false);
+  };
+
+  const handleAction = (action: { label: string; view: View | "collection" }) => {
+    if (action.view === "collection") { openCollectionFollowup(); return; }
+    const organization = organizationFromAgentResult(messages[messages.length - 1]?.topic, messages[messages.length - 1]?.result);
+    if (organization) selectOrganization(organization);
+    go(action.view);
+    setOpen(false);
+  };
+
+  const contextLabel = context.consortiumId ? `${context.consortiumId}${context.module && context.module !== "consorcio" ? ` · ${CONTEXT_MODULE_LABEL[context.module]}` : ""}` : "Operación general";
+
+  return (
+    <>
+      <button className="copilot-trigger" onClick={() => setOpen(!open)} aria-label={open ? "Cerrar ConcilIA" : "Abrir ConcilIA"}>
+        <Icon name="agent" size={18} />
+        <span>ConcilIA</span>
+      </button>
+      {open && (
+        <div className="copilot-panel">
+          <header>
+            <div>
+              <Icon name="agent" size={15} />
+              <b>ConcilIA</b>
+            </div>
+            <button onClick={() => setOpen(false)} aria-label="Cerrar">
+              <Icon name="close" size={13} />
+            </button>
+          </header>
+          <div className="copilot-context">
+            <small>Viendo</small>
+            <span>{contextLabel}</span>
+          </div>
+          <div className="copilot-thread" aria-live="polite">
+            {messages.length === 0 ? (
+              <div className="copilot-empty">
+                <p>Preguntame sobre {context.consortiumId || "tu operación"}.</p>
+                <div className="copilot-suggestions">
+                  {suggestionsFor().map((s) => (
+                    <button onClick={() => send(s)} key={s}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              messages.map((m, i) => (
+                <div className={`copilot-message ${m.role}`} key={i}>
+                  <p>{m.text}</p>
+                  {m.role === "assistant" && <AgentResult topic={m.topic || "general"} result={m.result} />}
+                  {m.action && (
+                    <button className="deep-link" onClick={() => handleAction(m.action!)}>
+                      {m.action.label}
+                      <Icon name="arrow" size={13} />
+                    </button>
+                  )}
+                  {m.suggestions && m.suggestions.length > 0 && (
+                    <div className="followups">
+                      {m.suggestions.slice(0, 3).map((s) => (
+                        <button onClick={() => send(s === "Reintentar" ? [...messages].reverse().find((item) => item.role === "user")?.text || s : s)} key={s}>
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+            {loading && (
+              <div className="copilot-loading">
+                <i />
+                <i />
+                <i />
+              </div>
+            )}
+          </div>
+          <form
+            className="copilot-composer"
+            onSubmit={(e: FormEvent) => {
+              e.preventDefault();
+              send();
+            }}
+          >
+            <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Preguntale a ConcilIA…" maxLength={800} />
+            <button disabled={!input.trim() || loading} aria-label="Enviar">
+              <Icon name="arrow" size={15} />
+            </button>
+          </form>
+        </div>
+      )}
+    </>
+  );
+}
+
 function Agent({
   go,
   selectOrganization,
   pendingPrompt,
   clearPendingPrompt,
+  openCollectionFollowup,
 }: {
   go: (v: View) => void;
   selectOrganization: (name: string) => void;
   pendingPrompt: string | null;
   clearPendingPrompt: () => void;
+  openCollectionFollowup: () => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationState, setConversationState] = useState<Record<string, unknown>>({});
@@ -1934,46 +2360,14 @@ function Agent({
     const normalized = q.toLowerCase();
     setLoadingLabel(normalized.includes("document") || normalized.includes("factura") || normalized.includes("vence") ? "Buscando documentos…" : normalized.includes("mora") || normalized.includes("deben") ? "Revisando morosidad…" : normalized.includes("pago") || normalized.includes("concil") ? "Revisando conciliaciones…" : "Consultando la operación…");
     setLoading(true);
-    try {
-      const response = await fetch("/api/assistant", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: conversation.map((m) => ({
-            role: m.role,
-            content: m.text,
-          })),
-          state: conversationState,
-          sessionId,
-        }),
-      });
-      const data = (await response.json()) as {
-        error?: string;
-        answer?: string;
-        topic?: string;
-        suggested_questions?: string[];
-        action?: { label: string; view: View } | null;
-        result?: unknown;
-        state?: Record<string, unknown>;
-      };
-      if (!response.ok || !data.answer) throw new Error(data.error || "No pude consultar el Agente.");
-      setMessages((m) => [
-        ...m,
-        {
-          role: "assistant",
-          text: data.answer!,
-          topic: data.topic || "general",
-          action: data.action || null,
-          suggestions: data.suggested_questions || [],
-          result: data.result,
-        },
-      ]);
-      if (data.state) setConversationState(data.state);
-    } catch (error) {
-      setMessages((m) => [...m, { role: "assistant", text: error instanceof Error ? error.message : "No pude consultar el Agente en este momento.", suggestions: ["Reintentar"] }]);
-    } finally {
-      setLoading(false);
+    const reply = await sendToAssistant(conversation, conversationState, sessionId);
+    if (reply.ok) {
+      setMessages((m) => [...m, { role: "assistant", text: reply.answer, topic: reply.topic, action: reply.action, suggestions: reply.suggestions, result: reply.result }]);
+      setConversationState(reply.state);
+    } else {
+      setMessages((m) => [...m, { role: "assistant", text: reply.error, suggestions: ["Reintentar"] }]);
     }
+    setLoading(false);
   };
   return (
     <div className="agent-page">
@@ -2044,6 +2438,7 @@ function Agent({
                       className="deep-link"
                       onClick={() => {
                         trackShowroomEvent("primary_click", { target: "agent_deep_link" });
+                        if (m.action!.view === "collection") { openCollectionFollowup(); return; }
                         const organization = organizationFromAgentResult(m.topic, m.result);
                         if (organization) selectOrganization(organization);
                         go(m.action!.view);
