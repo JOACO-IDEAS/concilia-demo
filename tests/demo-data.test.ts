@@ -515,7 +515,11 @@ test("V3 — Agent Q1: ATTENTION_SUMMARY returns a grounded, prioritized summary
   assert.equal(result.data.organization, "Arenales 2210");
   assert.equal(result.data.items.length, demoSelectors.buildingAttentionItems("Arenales 2210").length);
   const response = trustedResponse(result);
-  assert.match(response.answer, /Arenales 2210 tiene \d+ situacion/);
+  // TASK V3 preview-gate fix — 9 individual items grouped into 5 operational
+  // categories must never be called "5 situaciones" (implies 5 individual cases).
+  // "frentes" correctly names it as 5 grouped fronts.
+  assert.match(response.answer, /Arenales 2210 tiene \d+ frentes? que requiere/);
+  assert.equal(response.answer.includes("situacion"), false, "must never call 5 grouped categories '5 situaciones' — that implies 5 individual cases, not 9 items in 5 fronts");
   assert.match(response.answer, /2A/, "the answer must name the real worst unit, not a vague summary");
   assert.match(response.answer, /540\.000/);
 });

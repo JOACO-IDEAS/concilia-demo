@@ -149,7 +149,7 @@ export function trustedResponse(result: ToolResult) {
         return { answer: `Lo más urgente en ${d.organization} es ${CATEGORY_LABEL[item.category]}: ${describeAttentionItem(item)}.`, suggestions: ["¿Qué más necesita atención?", "¿Dónde tengo mayor mora?", `¿Cómo está ${d.organization}?`] };
       }
       const lines = d.items.map((item: any) => describeAttentionItem(item));
-      return { answer: `${d.organization} tiene ${d.items.length} ${d.items.length === 1 ? "situación" : "situaciones"} que requiere${d.items.length === 1 ? "" : "n"} atención: ${lines.join("; ")}.`, suggestions: ["¿Qué es lo más urgente?", "¿Dónde tengo mayor mora?", `¿Cómo está ${d.organization}?`] };
+      return { answer: `${d.organization} tiene ${d.items.length} ${d.items.length === 1 ? "frente" : "frentes"} que requiere${d.items.length === 1 ? "" : "n"} atención: ${lines.join("; ")}.`, suggestions: ["¿Qué es lo más urgente?", "¿Dónde tengo mayor mora?", `¿Cómo está ${d.organization}?`] };
     }
     default: return { answer: "Todavía no puedo consultar ese detalle.", suggestions: ["¿Qué requiere mi atención hoy?", "¿Dónde tengo mayor mora?"] };
   }

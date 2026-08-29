@@ -1478,7 +1478,7 @@ function Consortium({ go, organizationName, resolved, askAgent }: { go: (v: View
         <>
           {attentionItems.length > 0 && (
             <section className="attention-card card">
-              <SectionTitle eyebrow="REQUIERE TU ATENCIÓN" title={`${attentionItems.length} ${attentionItems.length === 1 ? "situación" : "situaciones"} en ${organization.name}`} />
+              <SectionTitle eyebrow="REQUIERE TU ATENCIÓN" title={`${attentionItems.length} ${attentionItems.length === 1 ? "frente" : "frentes"} que requiere${attentionItems.length === 1 ? "" : "n"} atención en ${organization.name}`} />
               <div className="attention-items">
                 {attentionItems.map((item) => {
                   const { title, detail, tone } = attentionHeadline(item);
@@ -2289,7 +2289,7 @@ function GlobalSearch({
       title: "CONSORCIOS",
       items: demoData.consortia.map((organization) => {
         const attention = demoSelectors.buildingAttentionItems(organization.name, resolved).length;
-        return { label: organization.name, meta: `${organization.units} unidades · ${formatMoney(organization.debt)} pendiente${attention ? ` · ${attention} ${attention === 1 ? "situación" : "situaciones"} para revisar` : ""}`, action: () => selectOrganization(organization.name) };
+        return { label: organization.name, meta: `${organization.units} unidades · ${formatMoney(organization.debt)} pendiente${attention ? ` · ${attention} ${attention === 1 ? "frente" : "frentes"} que requiere${attention === 1 ? "" : "n"} atención` : ""}`, action: () => selectOrganization(organization.name) };
       }),
     },
     {
