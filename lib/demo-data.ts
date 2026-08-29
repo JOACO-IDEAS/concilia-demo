@@ -83,6 +83,39 @@ const documents = [
   { type: "Seguro integral", provider: "Seguridad Urbana", date: "14/09/2026", consortium: "Arenales 2210", status: "Próximo a vencer" },
   { type: "Mantenimiento ascensor", provider: "Ascensores Delta", date: "15/08/2026", consortium: "Arenales 2210", status: "Vigente" },
   { type: "Certificación eléctrica", provider: "ElectroConsorcio", date: "11/09/2026", consortium: "Arenales 2210", status: "Vence en 21 días" },
+  // TASK V3 — completa la lectura operativa de documentación de Arenales 2210
+  // (Vigentes / Próximos a vencer / Requieren atención) sin inventar un proveedor nuevo.
+  { type: "Matafuegos", provider: "Seguridad Urbana", date: "20/09/2026", consortium: "Arenales 2210", status: "Próximo a vencer" },
+];
+
+// TASK V3 — Facturas / obligaciones con proveedores. Sólo Arenales 2210 tiene datos
+// por ahora: es el edificio canónico de la demo comercial, no se inventa cobertura
+// de cartera completa. El proveedor de ascensores es el MISMO que ya aparece en
+// `documents` y en `maintenanceAssets` — una sola relación, contada tres veces.
+const invoices = [
+  { id: "inv-arenales-ascensores", provider: "Christophersen Ascensores", concept: "Mantenimiento de ascensores", amount: 340000, dueDate: "15/09/2026", consortium: "Arenales 2210", status: "Pendiente" },
+  { id: "inv-arenales-agua", provider: "Aguas del Río", concept: "Servicio de agua", amount: 128000, dueDate: "05/09/2026", consortium: "Arenales 2210", status: "Próxima a vencer" },
+  { id: "inv-arenales-luz", provider: "Luz Metropolitana", concept: "Servicio eléctrico", amount: 96500, dueDate: "28/08/2026", consortium: "Arenales 2210", status: "Pagada" },
+];
+
+// TASK V3 — Mantenimiento / ascensores. "Operativo" es un estado registrado en la
+// demo, no telemetría en tiempo real: ConcilIA no controla ni monitorea el ascensor.
+const maintenanceAssets = [
+  {
+    id: "asc-arenales-a",
+    name: "Ascensor A",
+    consortium: "Arenales 2210",
+    status: "Operativo",
+    provider: "Christophersen Ascensores",
+    lastMaintenance: "15 ago 2026",
+    nextMaintenance: "15 sep 2026",
+    lastIncident: { description: "Puerta piso 6", status: "Resuelta", date: "10 ago 2026" },
+    timeline: [
+      { date: "15 jul 2026", event: "Mantenimiento preventivo" },
+      { date: "10 ago 2026", event: "Incidencia · Puerta piso 6 · Resuelta" },
+      { date: "15 ago 2026", event: "Mantenimiento preventivo" },
+    ],
+  },
 ];
 
 const currentPeriodIssued = 24820000;
@@ -111,7 +144,9 @@ export const demoData = {
     { consortium: "Arenales 2210", unit: "7C", owner: "Sofía Bianchi", occupant: "Sofía Bianchi", payer: "Carlos Fernández", bankSignal: "•••• 4812", history: [{ period: "ago 2026", amount: 248500, status: "Pendiente" }, { period: "jul 2026", amount: 204600, status: "Pagada" }] },
   ],
   documents,
-  providers: ["Ascensores Delta", "Christophersen Ascensores", "Limpieza Integral SRL", "Seguridad Urbana", "Servicios Sanitarios BA", "ElectroConsorcio"],
+  invoices,
+  maintenanceAssets,
+  providers: ["Ascensores Delta", "Christophersen Ascensores", "Limpieza Integral SRL", "Seguridad Urbana", "Servicios Sanitarios BA", "ElectroConsorcio", "Aguas del Río", "Luz Metropolitana"],
   communications: { today: 23, evidenceDetected: 8, receiptsLinked: 5, requiresConfirmation: 1, examples: [
     { from: "María Fernández", context: "Arenales 2210 · 2A", message: "Hola, transferí hoy las expensas. Te mando el comprobante.", detected: "Posible comprobante · $248.500", signal: "teléfono terminado en •4812" },
     { from: "Ana Paredes", context: "Arenales 2210 · 8C", message: "Este mes voy a pagar el viernes.", detected: "Posible promesa de pago · 28 agosto" },
@@ -160,6 +195,52 @@ export const demoSelectors = {
     needsInformation: demoData.reconciliation.informationCases[0],
     resolved: demoData.reconciliation.resolvedPayments.slice(0, 1),
   }),
+  // TASK V3 — documentos agrupados en las 3 categorías que pide la vista comercial
+  // (Vigentes/Próximos a vencer/Requieren atención). Partición exhaustiva por status:
+  // todo documento cae en exactamente un balde, así la suma siempre da el total real.
+  documentStatusGroups: (organizationName: string) => {
+    const docs = demoData.documents.filter((d) => d.consortium === organizationName);
+    return {
+      vigentes: docs.filter((d) => d.status === "Vigente" || d.status === "Disponible"),
+      proximos: docs.filter((d) => d.status === "Próximo a vencer"),
+      atencion: docs.filter((d) => d.status !== "Vigente" && d.status !== "Disponible" && d.status !== "Próximo a vencer"),
+    };
+  },
+  // Facturas agrupadas por estado real — mismo criterio de partición exhaustiva.
+  invoiceStatusGroups: (organizationName: string) => {
+    const inv = demoData.invoices.filter((i) => i.consortium === organizationName);
+    return {
+      pendientes: inv.filter((i) => i.status === "Pendiente"),
+      proximas: inv.filter((i) => i.status === "Próxima a vencer"),
+      pagadas: inv.filter((i) => i.status === "Pagada"),
+    };
+  },
+  // TASK V3 — "Requiere tu atención" para un consorcio: la MISMA lista que usa tanto
+  // la UI (Consorcio 360) como el Agente (ATTENTION_SUMMARY), para que nunca existan
+  // dos resúmenes distintos del mismo estado. El orden del array ES la prioridad
+  // determinística: mora crítica > documentación > facturas > conciliación > mantenimiento.
+  buildingAttentionItems: (organizationName: string, resolved = false) => {
+    const items: Array<{ category: string; count: number; view: string; unit?: (typeof demoData.collections.overdue)[number]; documents?: typeof documents; invoices?: typeof invoices; payment?: (typeof decisionCases)[number]; asset?: (typeof maintenanceAssets)[number] }> = [];
+
+    const criticalUnits = demoData.collections.overdue.filter((u) => u.consortium === organizationName && u.status === "Mora crítica").sort((a, b) => b.outstanding - a.outstanding);
+    if (criticalUnits.length) items.push({ category: "mora", count: criticalUnits.length, unit: criticalUnits[0], view: "debt" });
+
+    const { proximos, atencion } = demoSelectors.documentStatusGroups(organizationName);
+    const urgentDocuments = [...atencion, ...proximos];
+    if (urgentDocuments.length) items.push({ category: "documentos", count: urgentDocuments.length, documents: urgentDocuments, view: "documents" });
+
+    const { pendientes, proximas: proximasFacturas } = demoSelectors.invoiceStatusGroups(organizationName);
+    const urgentInvoices = [...pendientes, ...proximasFacturas];
+    if (urgentInvoices.length) items.push({ category: "facturas", count: urgentInvoices.length, invoices: urgentInvoices, view: "invoices" });
+
+    const orgDecisionCases = demoSelectors.decisionCases(resolved).filter((payment) => payment.candidates.some((c) => c.consortium === organizationName));
+    if (orgDecisionCases.length) items.push({ category: "conciliacion", count: orgDecisionCases.length, payment: orgDecisionCases[0], view: "reconciliation" });
+
+    const orgMaintenance = demoData.maintenanceAssets.filter((m) => m.consortium === organizationName);
+    if (orgMaintenance.length) items.push({ category: "mantenimiento", count: orgMaintenance.length, asset: orgMaintenance[0], view: "maintenance" });
+
+    return items;
+  },
 };
 
 export const demoContext = JSON.stringify(demoData);

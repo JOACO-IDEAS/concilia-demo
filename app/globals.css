@@ -446,7 +446,11 @@ main {
   font-weight: 650;
   white-space: nowrap;
 }
-.status i {
+/* TASK V3 — fix: sin este selector más específico, ".document-row i" (el ícono
+   de 34px del tipo de documento) le gana por orden de aparición a este dot de
+   5px cuando un Status queda anidado dentro de una fila de documento/factura,
+   produciendo el bug conocido de "cuadrados pálidos vacíos" en vez del punto. */
+span.status i {
   width: 5px;
   height: 5px;
   border-radius: 50%;
@@ -1398,6 +1402,208 @@ main {
 .detail-activity > div > p {
   font-size: 9px;
   margin: 0;
+}
+/* TASK V3 — Consorcio 360: Requiere tu atención */
+.attention-card {
+  margin-bottom: 16px;
+}
+.attention-card > .section-title {
+  padding: 15px 17px 0;
+}
+.attention-items {
+  padding: 12px 17px 17px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.attention-item {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  display: grid;
+  grid-template-columns: 8px 1fr 16px;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  cursor: pointer;
+}
+.attention-item:hover {
+  background: #fafbfe;
+}
+.attention-item b,
+.attention-item small {
+  display: block;
+}
+.attention-item b {
+  font-size: 10px;
+}
+.attention-item small {
+  font-size: 8px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.attention-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.attention-item.danger .attention-dot {
+  background: var(--red);
+}
+.attention-item.warning .attention-dot {
+  background: var(--amber);
+}
+.attention-item.neutral .attention-dot {
+  background: var(--blue);
+}
+/* TASK V3 — Documentos / Facturas / Mantenimiento: resumen operativo */
+.operations-groups {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin: 16px 0;
+}
+.operations-group {
+  padding: 0;
+  text-align: left;
+  border: 0;
+  cursor: pointer;
+}
+.operations-group > .section-title {
+  padding: 15px 17px 10px;
+}
+.operations-counts {
+  padding: 0 17px 17px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.operations-counts > span {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 9px;
+  color: var(--muted);
+}
+.operations-counts > span.warn {
+  color: var(--amber);
+}
+.operations-counts > span > b {
+  font-size: 15px;
+  color: var(--ink);
+}
+.operations-counts > span.warn > b {
+  color: var(--amber);
+}
+.quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.quick-actions > button {
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #33425b;
+  cursor: pointer;
+}
+.quick-actions > button:hover {
+  background: #fafbfe;
+}
+.quick-actions > button.ask-agent {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+/* TASK V3 — Facturas: filas informativas, no accionables (todo el dato ya está a la vista) */
+.document-row.static {
+  cursor: default;
+}
+.document-row.static:hover {
+  background: #fff;
+}
+/* TASK V3 — Mantenimiento / ascensores */
+.maintenance-page {
+  max-width: 720px;
+}
+.maintenance-card {
+  padding: 20px;
+}
+.maintenance-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+.maintenance-header p {
+  margin: 0 0 6px;
+  color: #8b95a6;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+.maintenance-header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.maintenance-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  margin: 14px 0;
+}
+.maintenance-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.maintenance-grid small {
+  font-size: 8px;
+  color: #8b95a6;
+  text-transform: uppercase;
+}
+.maintenance-grid b {
+  font-size: 12px;
+}
+.maintenance-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.maintenance-timeline > div {
+  display: grid;
+  grid-template-columns: 22px 90px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+.maintenance-timeline span {
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: var(--green-soft);
+  color: var(--green);
+  display: grid;
+  place-items: center;
+}
+.maintenance-timeline time {
+  font-size: 8px;
+  color: var(--muted);
+}
+.maintenance-timeline p {
+  margin: 0;
+  font-size: 10px;
 }
 .document-search {
   height: 50px;
@@ -2764,6 +2970,19 @@ main {
   }
   .kpis {
     grid-template-columns: 1fr 1fr;
+  }
+  .operations-groups {
+    grid-template-columns: 1fr;
+  }
+  .maintenance-grid {
+    grid-template-columns: 1fr;
+  }
+  .maintenance-timeline > div {
+    grid-template-columns: 22px 74px 1fr;
+  }
+  .document-row,
+  .maintenance-timeline > div {
+    font-size: 9px;
   }
   .priority-list article {
     grid-template-columns: 36px 1fr auto;

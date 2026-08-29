@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { demoData, demoSelectors } from "../lib/demo-data.ts";
-import { inferDeterministicRead, runAgentTool } from "../lib/agent-tools.ts";
+import { inferDeterministicRead, runAgentTool, trustedResponse, updateConversationState } from "../lib/agent-tools.ts";
 
 test("portfolio has exactly 12 consortia and 348 uniquely-owned units", () => {
   assert.equal(demoData.consortia.length, 12);
@@ -406,4 +406,222 @@ test("TASK V2.4.2 — Home actually threads resolvedUnit into the activity selec
   const homeCallSite = page.slice(0, page.indexOf("function Home(")).lastIndexOf("<Home ");
   const homeCall = page.slice(homeCallSite, page.indexOf("/>", homeCallSite));
   assert.ok(homeCall.includes("resolvedUnit={resolvedUnit}"), "ProductDemo must pass resolvedUnit down to Home");
+});
+
+// ==================================================
+// TASK V3 — Commercial Demo Expansion (Arenales 2210)
+// ==================================================
+
+test("V3 — invariant audit: currently-approved canonical values that already match are untouched", () => {
+  assert.equal(demoData.consortia.length, 12);
+  assert.equal(demoData.portfolio.consortia, 12);
+  assert.equal(demoData.units.length, 348);
+  assert.equal(demoSelectors.pendingUnits().length, 42);
+  assert.equal(demoSelectors.debtTotal(), 8_700_000);
+  assert.equal(demoData.collections.currentPeriodOutstanding, 4_820_000);
+  assert.equal([...demoData.consortia].sort((a, b) => b.debt - a.debt)[0].name, "Arenales 2210");
+  assert.equal(Math.round(demoSelectors.debtTotal() / demoSelectors.pendingUnits().length), 207_143);
+  const worst = [...demoData.collections.overdue].sort((a, b) => b.outstanding - a.outstanding)[0];
+  assert.equal(worst.consortium, "Arenales 2210");
+  assert.equal(worst.unit, "2A");
+  assert.equal(worst.outstanding, 540_000);
+  assert.equal(worst.days, 74);
+  assert.equal(worst.status, "Mora crítica");
+});
+
+test("V3 — building 360 derives from canonical data: no invented aggregate contradicts unit-level detail", () => {
+  const org = demoData.consortia.find((c) => c.name === "Arenales 2210")!;
+  const ownUnits = demoData.units.filter((u) => u.consortium === "Arenales 2210");
+  assert.equal(org.units, ownUnits.length);
+  assert.equal(org.debt, ownUnits.reduce((sum, u) => sum + u.outstanding, 0));
+  assert.equal(org.pending, ownUnits.filter((u) => u.outstanding > 0).length);
+});
+
+test("V3 — document counts match document detail (Vigentes + Próximos + Atención === total, exhaustive partition)", () => {
+  for (const name of demoData.consortia.map((c) => c.name)) {
+    const groups = demoSelectors.documentStatusGroups(name);
+    const total = demoData.documents.filter((d) => d.consortium === name).length;
+    assert.equal(groups.vigentes.length + groups.proximos.length + groups.atencion.length, total, `partition must be exhaustive for ${name}`);
+  }
+  const arenales = demoSelectors.documentStatusGroups("Arenales 2210");
+  assert.equal(arenales.vigentes.length, 2);
+  assert.equal(arenales.proximos.length, 2);
+  assert.equal(arenales.atencion.length, 1);
+});
+
+test("V3 — invoice counts match invoice detail (Pendientes + Próximas + Pagadas === total)", () => {
+  const groups = demoSelectors.invoiceStatusGroups("Arenales 2210");
+  const total = demoData.invoices.filter((i) => i.consortium === "Arenales 2210").length;
+  assert.equal(groups.pendientes.length + groups.proximas.length + groups.pagadas.length, total);
+  assert.equal(groups.pendientes.length, 1);
+  assert.equal(groups.proximas.length, 1);
+  assert.equal(groups.pagadas.length, 1);
+  // amounts/counts are defined once in the canonical dataset — no magic values elsewhere
+  const ascensores = demoData.invoices.find((i) => i.provider === "Christophersen Ascensores");
+  assert.ok(ascensores);
+  assert.equal(ascensores!.consortium, "Arenales 2210");
+});
+
+test("V3 — every document/invoice provider is a real, already-known supplier (no fabricated brand)", () => {
+  const providers = new Set(demoData.providers);
+  for (const doc of demoData.documents) assert.ok(providers.has(doc.provider), `document provider "${doc.provider}" must be in demoData.providers`);
+  for (const inv of demoData.invoices) assert.ok(providers.has(inv.provider), `invoice provider "${inv.provider}" must be in demoData.providers`);
+});
+
+test("V3 — maintenance summary matches asset detail, and status is framed as recorded, not live telemetry", () => {
+  const assets = demoData.maintenanceAssets.filter((a) => a.consortium === "Arenales 2210");
+  assert.equal(assets.length, 1);
+  const asset = assets[0];
+  assert.equal(asset.name, "Ascensor A");
+  assert.equal(asset.status, "Operativo");
+  assert.equal(asset.provider, "Christophersen Ascensores");
+  assert.equal(asset.timeline.length, 3);
+  assert.equal(asset.lastIncident.status, "Resuelta");
+  // no other consortium has fabricated maintenance data
+  assert.equal(demoData.maintenanceAssets.filter((a) => a.consortium !== "Arenales 2210").length, 0);
+});
+
+test("V3 — attention items derive from actual implemented data, priority order is deterministic, and empty consortia are honestly empty", () => {
+  const items = demoSelectors.buildingAttentionItems("Arenales 2210", false);
+  const categories = items.map((i) => i.category);
+  assert.deepEqual(categories, ["mora", "documentos", "facturas", "conciliacion", "mantenimiento"], "priority order must be deterministic: mora crítica > documentación > facturas > conciliación > mantenimiento");
+  assert.equal(items[0].unit!.unit, "2A");
+  assert.equal(items[0].unit!.outstanding, 540_000);
+
+  // Q3-equivalent: the single most-urgent item for Arenales must always resolve to the canonical worst unit,
+  // confirmed AND unconfirmed, because tier 1 (critical arrears) always outranks every other tier.
+  assert.equal(demoSelectors.buildingAttentionItems("Arenales 2210", true)[0].category, "mora");
+
+  // a consortium with none of this synthetic data must return an honest empty list — never fabricated counts.
+  const paraguay = demoData.consortia.find((c) => c.debt > 0 && demoData.documents.every((d) => d.consortium !== c.name) && demoData.invoices.every((i) => i.consortium !== c.name) && demoData.maintenanceAssets.every((m) => m.consortium !== c.name));
+  assert.ok(paraguay, "fixture must contain at least one consortium with zero documents/invoices/maintenance for this test to mean anything");
+  const emptyItems = demoSelectors.buildingAttentionItems(paraguay!.name, false);
+  assert.equal(emptyItems.some((i) => i.category === "documentos" || i.category === "facturas" || i.category === "mantenimiento"), false);
+});
+
+test("V3 — no cross-building data leakage: attention/documents/invoices/maintenance never bleed between consortia", () => {
+  const arenalesDocs = demoSelectors.documentStatusGroups("Arenales 2210");
+  const santaFeDocs = demoSelectors.documentStatusGroups("Santa Fe 1842");
+  assert.equal(santaFeDocs.vigentes.length + santaFeDocs.proximos.length + santaFeDocs.atencion.length, 0, "Santa Fe 1842 must not inherit Arenales 2210's documents");
+  assert.equal(demoData.invoices.every((i) => i.consortium === "Arenales 2210"), true, "no invoice may be silently attributed to the wrong consortium");
+  const arenalesAttention = demoSelectors.buildingAttentionItems("Arenales 2210", false);
+  const santaFeAttention = demoSelectors.buildingAttentionItems("Santa Fe 1842", false);
+  assert.notDeepEqual(arenalesAttention, santaFeAttention);
+});
+
+test("V3 — Agent Q1: ATTENTION_SUMMARY returns a grounded, prioritized summary for Arenales 2210", () => {
+  const result = runAgentTool("ATTENTION_SUMMARY", { organization: "Arenales 2210", most_urgent_only: false });
+  assert.equal(result.kind, "attention_summary");
+  assert.equal(result.data.organization, "Arenales 2210");
+  assert.equal(result.data.items.length, demoSelectors.buildingAttentionItems("Arenales 2210").length);
+  const response = trustedResponse(result);
+  assert.match(response.answer, /Arenales 2210 tiene \d+ situacion/);
+  assert.match(response.answer, /2A/, "the answer must name the real worst unit, not a vague summary");
+  assert.match(response.answer, /540\.000/);
+});
+
+test("V3 — Agent Q2: most_urgent_only preserves conversational context and resolves deterministically", () => {
+  const q1 = runAgentTool("ATTENTION_SUMMARY", { organization: "Arenales 2210", most_urgent_only: false });
+  const state = updateConversationState({}, "ATTENTION_SUMMARY", q1);
+  assert.equal(state.activeOrganization, "Arenales 2210", "the organization must stay in state for a stateless follow-up question");
+  // resolveToolArgs would fill organization from state; simulate the follow-up call directly
+  const q2 = runAgentTool("ATTENTION_SUMMARY", { organization: state.activeOrganization, most_urgent_only: true });
+  assert.equal(q2.data.items.length, 1);
+  assert.equal(q2.data.items[0].category, "mora");
+  const response = trustedResponse(q2);
+  assert.match(response.answer, /mora crítica/);
+  assert.match(response.answer, /2A/);
+  assert.match(response.answer, /540\.000/);
+  assert.match(response.answer, /74 días/);
+});
+
+test("V3 — existing Agent conversation is unaffected: ¿Dónde tengo mayor mora? → unidades → la peor", () => {
+  const debt = runAgentTool("DEBT_OVERVIEW", { scope: "portfolio", organization: null });
+  const debtAnswer = trustedResponse(debt).answer;
+  assert.match(debtAnswer, /Arenales 2210/);
+  assert.match(debtAnswer, /4\.820\.000/);
+
+  const state = updateConversationState({}, "DEBT_OVERVIEW", debt);
+  const units = runAgentTool("DEBT_UNIT_DETAIL", { organization: state.activeOrganization, minimum_amount: null, mode: null });
+  const unitsAnswer = trustedResponse(units).answer;
+  assert.match(unitsAnswer, /27 unidades/);
+  assert.match(unitsAnswer, /2A/);
+
+  const worst = runAgentTool("DEBT_UNIT_DETAIL", { organization: state.activeOrganization, minimum_amount: 0, mode: "prioritize" });
+  const worstAnswer = trustedResponse(worst).answer;
+  assert.match(worstAnswer, /2A/);
+  assert.match(worstAnswer, /540\.000/);
+  assert.match(worstAnswer, /74 días/);
+  assert.match(worstAnswer, /mora crítica/);
+  assert.match(worstAnswer, /no ejecuté ninguna acción/, "must keep stating no automatic action was taken");
+});
+
+test("V3 — Q3 canonical worst-unit fact is unchanged: Arenales 2210 · 2A · $540.000 · 74 días · mora crítica", () => {
+  const unit = runAgentTool("UNIT_LOOKUP", { organization: "Arenales 2210", unit: "2A" }).data;
+  assert.equal(unit.consortium, "Arenales 2210");
+  assert.equal(unit.unit, "2A");
+  assert.equal(unit.outstanding, 540_000);
+  assert.equal(unit.days, 74);
+  assert.equal(unit.status, "Mora crítica");
+});
+
+test("V3 — search result routes to Consorcio 360 and surfaces real attention context, not a static blurb", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const searchSection = page.slice(page.indexOf("function GlobalSearch("), page.indexOf("function Notifications("));
+  assert.ok(searchSection.includes('title: "CONSORCIOS"'));
+  assert.ok(searchSection.includes("demoSelectors.buildingAttentionItems(organization.name, resolved)"), "the search result's attention count must come from the same selector as the building 360, not a separate guess");
+  assert.ok(searchSection.includes("selectOrganization(organization.name)"), "clicking the result must open that exact building, not a hardcoded one");
+});
+
+test("V3 — Consorcio 360 attention/documents/invoices/maintenance render from the shared selectors, never a second hardcoded summary", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const consortiumSection = page.slice(page.indexOf("function Consortium("), page.indexOf("function Documents("));
+  assert.ok(consortiumSection.includes("demoSelectors.buildingAttentionItems(organization.name, resolved)"));
+  assert.ok(consortiumSection.includes("demoSelectors.documentStatusGroups(organization.name)"));
+  assert.ok(consortiumSection.includes("demoSelectors.invoiceStatusGroups(organization.name)"));
+  assert.ok(consortiumSection.includes('demoData.maintenanceAssets.filter'));
+});
+
+test("V3 — contextual Agent entry point uses a transparent prefilled prompt, never a hidden/fabricated context channel", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const consortiumSection = page.slice(page.indexOf("function Consortium("), page.indexOf("function Documents("));
+  assert.ok(consortiumSection.includes("askAgent(`¿Qué necesita atención en ${organization.name}?`)"), "the prefilled prompt must literally name the consortium, transparently");
+  const agentSection = page.slice(page.indexOf("function Agent("), page.indexOf("function AgentResult("));
+  assert.ok(agentSection.includes("setInput(pendingPrompt)"), "the prompt must be shown to the user in the input, never auto-sent or hidden");
+  assert.equal(/send\(pendingPrompt\)/.test(agentSection), false, "must never auto-send a prefilled prompt without the user's own action");
+});
+
+test("V3 — Agent deep-link never leaks the wrong building (organizationFromAgentResult)", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const helperSection = page.slice(page.indexOf("function organizationFromAgentResult("), page.indexOf("function AgentResult("));
+  assert.ok(helperSection.includes('topic === "organization"'));
+  assert.ok(helperSection.includes('topic === "unit"'));
+  assert.ok(helperSection.includes('topic === "attention_summary"'));
+  const deepLinkSection = page.slice(page.indexOf("className=\"deep-link\""), page.indexOf("className=\"deep-link\"") + 400);
+  assert.ok(deepLinkSection.includes("organizationFromAgentResult(m.topic, m.result)"));
+  assert.ok(deepLinkSection.includes("selectOrganization(organization)"));
+});
+
+test("V3 — no new real integrations: maintenance/invoices stay synthetic, no IoT/telemetry/legal-certification claims", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const maintenanceSection = page.slice(page.indexOf("function Maintenance("), page.indexOf("function EvidenceFlow("));
+  assert.ok(maintenanceSection.includes("no telemetría en tiempo real"));
+  for (const banned of ["IoT", "sensor", "certificación oficial", "validación gubernamental", "tiempo real del ascensor"]) {
+    assert.equal(maintenanceSection.includes(banned), false, `overclaim risk: found "${banned}"`);
+  }
+  const invoicesSection = page.slice(page.indexOf("function Invoices("), page.indexOf("function Maintenance("));
+  for (const banned of ["pagar ahora", "ejecutar pago", "transferencia automática", "integración bancaria"]) {
+    assert.equal(invoicesSection.includes(banned), false, `overclaim risk: found "${banned}" in Facturas`);
+  }
+});
+
+test("V3 — Documentos status tone is never miscategorized (fixes the 'vence' vs 'vencer' gap)", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const documentsSection = page.slice(page.indexOf("function Documents("), page.indexOf("function Invoices("));
+  assert.ok(documentsSection.includes("/vence|vencer|atenci[oó]n/i"), "the status-tone check must catch 'Vence en 21 días', not just literal 'vencer'");
+  for (const doc of demoData.documents) {
+    const matchesUrgent = /vence|vencer|atenci[oó]n/i.test(doc.status);
+    const isKnownCalm = doc.status === "Vigente" || doc.status === "Disponible";
+    assert.ok(matchesUrgent || isKnownCalm, `document status "${doc.status}" falls into neither bucket — tone would be wrong`);
+  }
 });

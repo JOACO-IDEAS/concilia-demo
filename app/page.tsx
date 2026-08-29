@@ -13,6 +13,8 @@ type View =
   | "consortia"
   | "consortium"
   | "documents"
+  | "invoices"
+  | "maintenance"
   | "evidence"
   | "agent"
   | "settings";
@@ -199,6 +201,7 @@ export default function ProductDemo() {
   const [selectedOrganization, setSelectedOrganization] = useState("Arenales 2210");
   const [importOpen, setImportOpen] = useState(false);
   const [resolvedUnit, setResolvedUnit] = useState(featuredPayment.candidates[0].unit);
+  const [pendingAgentPrompt, setPendingAgentPrompt] = useState<string | null>(null);
   useEffect(() => {
     const engaged = window.setTimeout(() => trackShowroomEvent("engagement_30s"), 30_000);
     return () => window.clearTimeout(engaged);
@@ -230,6 +233,7 @@ export default function ProductDemo() {
     setSearchOpen(false);
     setSelectedOrganization("Arenales 2210");
     setImportOpen(false);
+    setPendingAgentPrompt(null);
     setView("home");
     notify("Demo reiniciada · estado inicial restaurado");
   };
@@ -256,6 +260,14 @@ export default function ProductDemo() {
       "Documentos",
       "Encontrá facturas, comprobantes y contratos en segundos.",
     ],
+    invoices: [
+      "Facturas",
+      "Obligaciones con proveedores: qué está pendiente, próximo a vencer o pagado.",
+    ],
+    maintenance: [
+      "Mantenimiento",
+      "Estado operativo de los activos del consorcio.",
+    ],
     evidence: [
       "Comprobantes",
       "De una señal recibida a una conciliación preparada.",
@@ -279,7 +291,9 @@ export default function ProductDemo() {
       ? "reconciliation"
       : view === "consortium"
         ? "consortia"
-        : view;
+        : view === "invoices" || view === "maintenance"
+          ? "documents"
+          : view;
   return (
     <div className="product-shell">
       <aside className={`sidebar ${menuOpen ? "mobile-open" : ""}`}>
@@ -388,10 +402,19 @@ export default function ProductDemo() {
           {view === "resolution" && <Resolution resolved={resolved} resolvedUnit={resolvedUnit} confirm={confirm} go={go} />}
           {view === "debt" && <Debt />}
           {view === "consortia" && <Consortia go={go} select={(name) => { setSelectedOrganization(name); go("consortium"); }} />}
-          {view === "consortium" && <Consortium go={go} organizationName={selectedOrganization} resolved={resolved} />}
+          {view === "consortium" && (
+            <Consortium
+              go={go}
+              organizationName={selectedOrganization}
+              resolved={resolved}
+              askAgent={(prompt) => { setPendingAgentPrompt(prompt); go("agent"); }}
+            />
+          )}
           {view === "documents" && <Documents open={setDoc} />}
+          {view === "invoices" && <Invoices organizationName={selectedOrganization} go={go} />}
+          {view === "maintenance" && <Maintenance organizationName={selectedOrganization} go={go} />}
           {view === "evidence" && <EvidenceFlow go={go} resolved={resolved} />}
-          {view === "agent" && <Agent go={go} />}
+          {view === "agent" && <Agent go={go} selectOrganization={setSelectedOrganization} pendingPrompt={pendingAgentPrompt} clearPendingPrompt={() => setPendingAgentPrompt(null)} />}
           {view === "settings" && <Settings />}
         </section>
       </main>
@@ -1384,7 +1407,26 @@ function Consortia({ go, select }: { go: (v: View) => void; select: (name: strin
   );
 }
 
-function Consortium({ go, organizationName, resolved }: { go: (v: View) => void; organizationName: string; resolved: boolean }) {
+function attentionHeadline(item: ReturnType<typeof demoSelectors.buildingAttentionItems>[number]): { title: string; detail: string; tone: "danger" | "warning" | "neutral" } {
+  switch (item.category) {
+    case "mora": {
+      const unit = item.unit!;
+      return { title: `${item.count} unidad${item.count === 1 ? "" : "es"} en mora crítica`, detail: `${unit.unit} · ${formatMoney(unit.outstanding)} · ${unit.days} días`, tone: "danger" };
+    }
+    case "documentos":
+      return { title: `${item.count} documento${item.count === 1 ? "" : "s"} requiere${item.count === 1 ? "" : "n"} atención`, detail: item.documents!.map((d) => d.type).join(", "), tone: "warning" };
+    case "facturas":
+      return { title: `${item.count} factura${item.count === 1 ? "" : "s"} pendiente${item.count === 1 ? "" : "s"}`, detail: item.invoices!.map((i) => i.provider).join(", "), tone: "warning" };
+    case "conciliacion":
+      return { title: `${item.count} pago${item.count === 1 ? "" : "s"} para revisar`, detail: formatMoney(item.payment!.amount), tone: "warning" };
+    case "mantenimiento":
+      return { title: `${item.count} mantenimiento${item.count === 1 ? "" : "s"} programado${item.count === 1 ? "" : "s"}`, detail: `${item.asset!.name} · próximo ${item.asset!.nextMaintenance}`, tone: "neutral" };
+    default:
+      return { title: "", detail: "", tone: "neutral" };
+  }
+}
+
+function Consortium({ go, organizationName, resolved, askAgent }: { go: (v: View) => void; organizationName: string; resolved: boolean; askAgent: (prompt: string) => void }) {
   const [tab, setTab] = useState("Resumen");
   const organization = demoData.consortia.find((item) => item.name === organizationName) || demoData.consortia[0];
   const organizationDocuments = demoData.documents.filter((item) => item.consortium === organization.name);
@@ -1392,6 +1434,12 @@ function Consortium({ go, organizationName, resolved }: { go: (v: View) => void;
   // decisionCases(resolved): nunca un contador estático que siga mostrando "requiere
   // confirmación" después de que el administrador ya confirmó el caso.
   const openReconciliationCases = demoSelectors.decisionCases(resolved).filter((payment) => payment.candidates.some((candidate) => candidate.consortium === organization.name)).length;
+  // TASK V3 — misma fuente que usa el Agente (ATTENTION_SUMMARY): la UI y el Agente
+  // nunca pueden mostrar dos resúmenes distintos de "qué requiere atención" acá.
+  const attentionItems = demoSelectors.buildingAttentionItems(organization.name, resolved);
+  const documentGroups = demoSelectors.documentStatusGroups(organization.name);
+  const invoiceGroups = demoSelectors.invoiceStatusGroups(organization.name);
+  const organizationMaintenance = demoData.maintenanceAssets.filter((asset) => asset.consortium === organization.name);
   return (
     <div className="consortium-detail">
       <button className="back" onClick={() => go("consortia")}>
@@ -1428,6 +1476,26 @@ function Consortium({ go, organizationName, resolved }: { go: (v: View) => void;
       </div>
       {tab === "Resumen" ? (
         <>
+          {attentionItems.length > 0 && (
+            <section className="attention-card card">
+              <SectionTitle eyebrow="REQUIERE TU ATENCIÓN" title={`${attentionItems.length} ${attentionItems.length === 1 ? "situación" : "situaciones"} en ${organization.name}`} />
+              <div className="attention-items">
+                {attentionItems.map((item) => {
+                  const { title, detail, tone } = attentionHeadline(item);
+                  return (
+                    <button className={`attention-item ${tone}`} key={item.category} onClick={() => go(item.view as View)}>
+                      <span className="attention-dot" />
+                      <span>
+                        <b>{title}</b>
+                        <small>{detail}</small>
+                      </span>
+                      <Icon name="arrow" size={14} />
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          )}
           <div className="kpis">
             <Kpi
               label="Cobranza del mes"
@@ -1448,6 +1516,45 @@ function Consortium({ go, organizationName, resolved }: { go: (v: View) => void;
               note="en el legajo"
               tone="warning"
             />
+          </div>
+          <div className="operations-groups">
+            <button className="operations-group card" onClick={() => go("documents")}>
+              <SectionTitle eyebrow="DOCUMENTOS" title="Estado de la documentación" />
+              <div className="operations-counts">
+                <span><b>{documentGroups.vigentes.length}</b>Vigentes</span>
+                <span><b>{documentGroups.proximos.length}</b>Próximos a vencer</span>
+                <span className={documentGroups.atencion.length ? "warn" : ""}><b>{documentGroups.atencion.length}</b>Requieren atención</span>
+              </div>
+            </button>
+            <button className="operations-group card" onClick={() => go("invoices")}>
+              <SectionTitle eyebrow="FACTURAS" title="Obligaciones con proveedores" />
+              <div className="operations-counts">
+                <span className={invoiceGroups.pendientes.length ? "warn" : ""}><b>{invoiceGroups.pendientes.length}</b>Pendientes</span>
+                <span><b>{invoiceGroups.proximas.length}</b>Próximas a vencer</span>
+                <span><b>{invoiceGroups.pagadas.length}</b>Pagadas</span>
+              </div>
+            </button>
+            <button className="operations-group card" onClick={() => go("maintenance")}>
+              <SectionTitle eyebrow="MANTENIMIENTO" title="Activos operativos" />
+              {organizationMaintenance.length ? (
+                <div className="operations-counts">
+                  <span><b>{organizationMaintenance.length}</b>Activo{organizationMaintenance.length === 1 ? "" : "s"}</span>
+                  <span><b>{organizationMaintenance[0].status}</b>{organizationMaintenance[0].name}</span>
+                </div>
+              ) : (
+                <div className="operations-counts"><span><b>0</b>Sin activos registrados</span></div>
+              )}
+            </button>
+          </div>
+          <div className="quick-actions">
+            <button onClick={() => go("debt")}><Icon name="debt" size={15} />Ver morosidad</button>
+            <button onClick={() => go("reconciliation")}><Icon name="reconcile" size={15} />Ver conciliación</button>
+            <button onClick={() => go("documents")}><Icon name="document" size={15} />Ver documentos</button>
+            <button onClick={() => go("invoices")}><Icon name="document" size={15} />Ver facturas</button>
+            <button onClick={() => go("maintenance")}><Icon name="settings" size={15} />Ver mantenimiento</button>
+            <button className="ask-agent" onClick={() => askAgent(`¿Qué necesita atención en ${organization.name}?`)}>
+              <Icon name="agent" size={15} />Preguntarle a ConcilIA sobre este consorcio
+            </button>
           </div>
           <section className="detail-activity card">
             <SectionTitle eyebrow="ACTIVIDAD RECIENTE" title={organization.name} />
@@ -1554,7 +1661,7 @@ function Documents({
               <span>{x.period}</span>
               <strong>{x.amount}</strong>
               <Status
-                tone={x.status.toLowerCase().includes("vencer") ? "warning" : "success"}
+                tone={/vence|vencer|atenci[oó]n/i.test(x.status) ? "warning" : "success"}
               >
                 {x.status}
               </Status>
@@ -1568,6 +1675,125 @@ function Documents({
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+function Invoices({ organizationName, go }: { organizationName: string; go: (v: View) => void }) {
+  const [status, setStatus] = useState("Todas");
+  const filtered = demoData.invoices.filter((x) => status === "Todas" || x.status === status);
+  return (
+    <div className="documents-page">
+      <button className="back" onClick={() => go("consortium")}>
+        <Icon name="arrow" size={15} /> Volver a {organizationName}
+      </button>
+      <div className="category-tabs">
+        {["Todas", "Pendiente", "Próxima a vencer", "Pagada"].map((x) => (
+          <button className={status === x ? "active" : ""} onClick={() => setStatus(x)} key={x}>
+            {x === "Todas" ? x : `${x}s`}
+          </button>
+        ))}
+      </div>
+      <section className="document-list card">
+        <div className="table-head">
+          <span>Proveedor</span>
+          <span>Consorcio</span>
+          <span>Vencimiento</span>
+          <span>Importe</span>
+          <span>Estado</span>
+        </div>
+        {filtered.length ? (
+          filtered.map((x) => (
+            <div className="document-row static" key={x.id}>
+              <span>
+                <i>
+                  <Icon name="document" />
+                </i>
+                <p>
+                  <b>{x.provider}</b>
+                  <small>{x.concept}</small>
+                </p>
+              </span>
+              <b>{x.consortium}</b>
+              <span>{x.dueDate}</span>
+              <strong>{formatMoney(x.amount)}</strong>
+              <Status tone={/pendiente|vencer/i.test(x.status) ? "warning" : "success"}>{x.status}</Status>
+            </div>
+          ))
+        ) : (
+          <div className="empty-state">
+            <Icon name="search" />
+            <b>No encontramos facturas</b>
+            <span>Probá con otro estado.</span>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function Maintenance({ organizationName, go }: { organizationName: string; go: (v: View) => void }) {
+  const assets = demoData.maintenanceAssets.filter((asset) => asset.consortium === organizationName);
+  if (!assets.length) {
+    return (
+      <StatePanel
+        icon="settings"
+        title="Sin activos de mantenimiento registrados"
+        text={`${organizationName} todavía no tiene activos de mantenimiento cargados en esta demostración.`}
+        action="Volver al consorcio"
+        onClick={() => go("consortium")}
+      />
+    );
+  }
+  return (
+    <div className="maintenance-page">
+      <button className="back" onClick={() => go("consortium")}>
+        <Icon name="arrow" size={15} /> Volver a {organizationName}
+      </button>
+      {assets.map((asset) => (
+        <section className="maintenance-card card" key={asset.id}>
+          <div className="maintenance-header">
+            <div>
+              <p>{asset.consortium.toUpperCase()}</p>
+              <h2>{asset.name}</h2>
+            </div>
+            <Status tone="success">{asset.status}</Status>
+          </div>
+          <p className="import-disclaimer">
+            <Icon name="info" size={12} /> Estado operativo registrado en esta demostración, no telemetría en tiempo real.
+          </p>
+          <div className="maintenance-grid">
+            <div>
+              <small>ÚLTIMO MANTENIMIENTO</small>
+              <b>{asset.lastMaintenance}</b>
+            </div>
+            <div>
+              <small>PRÓXIMO MANTENIMIENTO</small>
+              <b>{asset.nextMaintenance}</b>
+            </div>
+            <div>
+              <small>PROVEEDOR</small>
+              <b>{asset.provider}</b>
+            </div>
+            <div>
+              <small>ÚLTIMA INCIDENCIA</small>
+              <b>{asset.lastIncident.description}</b>
+              <Status tone="success">{asset.lastIncident.status}</Status>
+            </div>
+          </div>
+          <div className="maintenance-timeline">
+            {asset.timeline.map((event) => (
+              <div key={event.date + event.event}>
+                <span>
+                  <Icon name="check" size={12} />
+                </span>
+                <time>{event.date}</time>
+                <p>{event.event}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
@@ -1665,7 +1891,17 @@ type ChatMessage = {
   suggestions?: string[];
   result?: unknown;
 };
-function Agent({ go }: { go: (v: View) => void }) {
+function Agent({
+  go,
+  selectOrganization,
+  pendingPrompt,
+  clearPendingPrompt,
+}: {
+  go: (v: View) => void;
+  selectOrganization: (name: string) => void;
+  pendingPrompt: string | null;
+  clearPendingPrompt: () => void;
+}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationState, setConversationState] = useState<Record<string, unknown>>({});
   const [input, setInput] = useState("");
@@ -1673,6 +1909,13 @@ function Agent({ go }: { go: (v: View) => void }) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loadingLabel, setLoadingLabel] = useState("Consultando la operación…");
   const [sessionId] = useState(() => typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `demo-${Date.now()}`);
+  // TASK V3 — entrada contextual desde un consorcio: precarga un prompt transparente
+  // (nunca lo envía solo) para no fingir contexto oculto que el Agente no recibe.
+  useEffect(() => {
+    if (!pendingPrompt) return;
+    setInput(pendingPrompt);
+    clearPendingPrompt();
+  }, [pendingPrompt, clearPendingPrompt]);
   const suggestions = [
     "¿Qué requiere mi atención hoy?",
     "¿Qué pagos necesitan revisión?",
@@ -1799,7 +2042,12 @@ function Agent({ go }: { go: (v: View) => void }) {
                   {m.action && (
                     <button
                       className="deep-link"
-                      onClick={() => { trackShowroomEvent("primary_click", { target: "agent_deep_link" }); go(m.action!.view); }}
+                      onClick={() => {
+                        trackShowroomEvent("primary_click", { target: "agent_deep_link" });
+                        const organization = organizationFromAgentResult(m.topic, m.result);
+                        if (organization) selectOrganization(organization);
+                        go(m.action!.view);
+                      }}
                     >
                       {m.action.label}
                       <Icon name="arrow" size={14} />
@@ -1852,6 +2100,17 @@ function Agent({ go }: { go: (v: View) => void }) {
   );
 }
 
+// TASK V3 — evita cross-building leakage: si la respuesta del Agente fue sobre
+// OTRO consorcio, "Ver consorcio" debe abrir ESE consorcio, no el que ya estaba
+// seleccionado en la sesión.
+function organizationFromAgentResult(topic: string | undefined, result: unknown): string | null {
+  const data = result as any;
+  if (!data) return null;
+  if (topic === "organization" && typeof data.name === "string") return data.name;
+  if (topic === "unit" && typeof data.consortium === "string") return data.consortium;
+  if (topic === "attention_summary" && typeof data.organization === "string") return data.organization;
+  return null;
+}
 function AgentResult({ topic, result }: { topic: string; result?: unknown }) {
   const data = result as any;
   const money = (value: unknown) => typeof value === "number" ? `$${value.toLocaleString("es-AR")}` : "—";
@@ -1925,6 +2184,19 @@ function AgentResult({ topic, result }: { topic: string; result?: unknown }) {
   if (topic === "unit") return <div className="agent-result"><span><small>UNIDAD</small><b>{data.consortium} · {data.unit}</b></span><span><small>PROPIETARIO</small><b>{data.owner}</b></span><span><small>SALDO</small><b>{money(data.outstanding)}</b></span></div>;
   if (topic === "activity" && data[0]) return <div className="agent-priorities">{data.slice(0,3).map((x: any) => <span key={`${x.time}-${x.event}`}><b>{x.time}</b> {x.event}</span>)}</div>;
   if (topic === "reconciliation") return <div className="agent-result"><span><small>REQUIEREN DECISIÓN</small><b>{data.summary?.requiresDecision}</b></span><span><small>NECESITAN INFORMACIÓN</small><b>{data.summary?.requiresInformation}</b></span><span><small>RESOLUCIÓN AUTOMÁTICA</small><b>{data.summary?.straightThroughRate}%</b></span></div>;
+  if (topic === "attention_summary" && data.items) {
+    const categoryLabel: Record<string, string> = { mora: "Mora crítica", documentos: "Documentos", facturas: "Facturas", conciliacion: "Conciliación", mantenimiento: "Mantenimiento" };
+    return (
+      <div className="agent-result-list">
+        {data.items.map((item: any) => (
+          <div key={item.category}>
+            <b>{categoryLabel[item.category] || item.category}</b>
+            <span>{item.count}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
   if (topic !== "today") return null;
   return (
     <div className="agent-priorities">
@@ -2012,8 +2284,13 @@ function GlobalSearch({
       items: demoData.unitProfiles.map((unit) => ({ label: `${unit.consortium} · ${unit.unit}`, meta: `${unit.owner} · ${resolved && unit.consortium === featuredPayment.candidates[0].consortium && unit.unit === resolvedUnit ? "Pagada" : unit.history[0].status}`, action: () => selectOrganization(unit.consortium) })),
     },
     {
+      // TASK V3 — el resultado de búsqueda ya adelanta cuánto necesita atención,
+      // usando la MISMA lista que ve el administrador al abrir el Consorcio 360.
       title: "CONSORCIOS",
-      items: demoData.consortia.map((organization) => ({ label: organization.name, meta: `${organization.units} unidades · ${formatMoney(organization.debt)} pendiente`, action: () => selectOrganization(organization.name) })),
+      items: demoData.consortia.map((organization) => {
+        const attention = demoSelectors.buildingAttentionItems(organization.name, resolved).length;
+        return { label: organization.name, meta: `${organization.units} unidades · ${formatMoney(organization.debt)} pendiente${attention ? ` · ${attention} ${attention === 1 ? "situación" : "situaciones"} para revisar` : ""}`, action: () => selectOrganization(organization.name) };
+      }),
     },
     {
       title: "DOCUMENTOS",
