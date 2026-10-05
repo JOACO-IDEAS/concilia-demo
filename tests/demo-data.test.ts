@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { demoData, demoSelectors } from "../lib/demo-data.ts";
+import { deriveInvoiceTemporalState, demoData, demoSelectors, parseInvoiceDueDate } from "../lib/demo-data.ts";
 import { inferDeterministicRead, runAgentTool, trustedResponse, updateConversationState } from "../lib/agent-tools.ts";
 
 test("portfolio has exactly 12 consortia and 348 uniquely-owned units", () => {
@@ -449,12 +449,13 @@ test("V3 — document counts match document detail (Vigentes + Próximos + Atenc
   assert.equal(arenales.atencion.length, 1);
 });
 
-test("V3 — invoice counts match invoice detail (Pendientes + Próximas + Pagadas === total)", () => {
+test("V3 — invoice counts match invoice detail (Pendientes + Próximas + Vencidas + Pagadas === total)", () => {
   const groups = demoSelectors.invoiceStatusGroups("Arenales 2210");
   const total = demoData.invoices.filter((i) => i.consortium === "Arenales 2210").length;
-  assert.equal(groups.pendientes.length + groups.proximas.length + groups.pagadas.length, total);
+  assert.equal(groups.pendientes.length + groups.proximas.length + groups.vencidas.length + groups.pagadas.length, total);
   assert.equal(groups.pendientes.length, 1);
   assert.equal(groups.proximas.length, 1);
+  assert.equal(groups.vencidas.length, 1);
   assert.equal(groups.pagadas.length, 1);
   // amounts/counts are defined once in the canonical dataset — no magic values elsewhere
   const ascensores = demoData.invoices.find((i) => i.provider === "Christophersen Ascensores");
@@ -666,7 +667,7 @@ test("V3.1 #5 — current invoice query (CASE A1) returns Christophersen Ascenso
   const result = runAgentTool("CURRENT_INVOICE", { organization: "Arenales 2210" });
   assert.equal(result.data.invoice.provider, "Christophersen Ascensores");
   assert.equal(result.data.invoice.amount, 340000);
-  assert.equal(result.data.invoice.status, "Pendiente");
+  assert.equal(result.data.invoice.status, "PENDIENTE");
   const answer = trustedResponse(result).answer;
   assert.match(answer, /Christophersen Ascensores/);
   assert.match(answer, /340\.000/);
@@ -824,4 +825,121 @@ test("V3.1 #20 — no WRITE capability was added: every new tool is read-only, n
     assert.ok(tools.includes(`name: "${name}"`), `tool ${name} must be registered`);
   }
   assert.equal(tools.includes("fetch("), false, "agent-tools.ts must stay pure/deterministic — no network calls of its own");
+});
+
+test("V6 — invoice dates are strict ISO dates and temporal status is derived from the demo clock", () => {
+  assert.equal(parseInvoiceDueDate("2026-08-21"), Date.UTC(2026, 7, 21));
+  assert.throws(() => parseInvoiceDueDate("21/08/2026"), /Invalid ISO date/);
+  const make = (dueDate: string, paid = false) => deriveInvoiceTemporalState({ ...demoData.invoices[0], dueDate, paid } as any);
+  assert.equal(make("2026-08-20").status, "VENCIDA");
+  assert.equal(make("2026-08-21").status, "VENCE HOY");
+  assert.equal(make("2026-08-26").status, "PRÓXIMA A VENCER");
+  assert.equal(make("2026-09-15").status, "PENDIENTE");
+  assert.equal(make("2026-08-20", true).status, "PAGADA");
+});
+
+test("V6 — invoice selectors rank attention deterministically and exclude paid rows from action windows", () => {
+  const ranked = demoSelectors.invoicesByAttention("Arenales 2210");
+  assert.deepEqual(ranked.map((row) => row.status), ["VENCIDA", "PRÓXIMA A VENCER", "PENDIENTE", "PAGADA"]);
+  assert.equal(demoSelectors.invoiceAttention("Arenales 2210").some((row) => row.paid), false);
+  const week = demoSelectors.invoicesDueThisWeek("Arenales 2210");
+  assert.deepEqual(week.map((row) => row.id), ["inv-arenales-agua"]);
+  assert.equal(demoSelectors.nextUnpaidInvoice("Arenales 2210")?.id, "inv-arenales-agua");
+});
+
+test("V6.2 — next due semantics exclude overdue invoices without changing attention priority", () => {
+  const attention = runAgentTool("INVOICE_ATTENTION", { organization: "Arenales 2210", mode: "attention" });
+  assert.equal(attention.data.first.id, "inv-arenales-limpieza");
+  const nextDue = runAgentTool("INVOICE_ATTENTION", { organization: "Arenales 2210", mode: "next_due" });
+  assert.equal(nextDue.data.first.id, "inv-arenales-agua");
+  assert.equal(nextDue.data.first.amount, 128000);
+  assert.equal(nextDue.data.first.dueDate, "2026-08-26");
+  assert.match(trustedResponse(nextDue).answer, /La próxima en vencer es Aguas del Río: \$128\.000, el 26\/08\/2026\. Vence en 5 días\./);
+});
+
+test("V6 — unified attention contains exactly the three real deterministic priorities", () => {
+  const priorities = demoSelectors.unifiedAttention() as any[];
+  assert.deepEqual(priorities.map((item) => item.domain), ["mora", "facturas", "conciliacion"]);
+  assert.equal(priorities[0].unit, "2A");
+  assert.equal(priorities[1].invoice.id, "inv-arenales-limpieza");
+  assert.equal(priorities[2].count, demoSelectors.decisionCases().length);
+});
+
+test("V6 — collection rationale has at most three factual reasons and no invented score", () => {
+  const unit = demoData.collections.overdue.find((row) => row.consortium === "Arenales 2210" && row.unit === "2A")!;
+  const rationale = demoSelectors.collectionPriorityReasons(unit);
+  assert.deepEqual(rationale.reasons, ["74 días de atraso", "$540.000 pendientes", "Sin promesa de pago registrada"]);
+  assert.equal("score" in rationale, false);
+});
+
+test("V6 — reminder preview is local-only, unscheduled and unsent", () => {
+  const invoice = demoSelectors.invoicesDueThisWeek("Arenales 2210")[0];
+  const preview = demoSelectors.reminderPreview(invoice);
+  assert.equal(preview.reminderDate, "2026-08-22");
+  assert.equal(preview.label, "DEMOSTRACIÓN · NO PROGRAMADO");
+  assert.equal(preview.scheduled, false);
+  assert.equal(preview.sent, false);
+});
+
+test("V6 — canonical cross-domain conversation routes deterministically and preserves context", () => {
+  const prompts = [
+    "¿Qué requiere mi atención hoy?",
+    "Mostrame las facturas.",
+    "¿Cuál vence primero?",
+    "¿Qué vence esta semana?",
+    "Preparame un recordatorio para mañana.",
+    "¿Y de mora cómo estamos?",
+    "¿Cuál es la peor?",
+    "¿Por qué?",
+    "Preparame el seguimiento.",
+  ];
+  const expectedTools = ["TODAY_ATTENTION", "LIST_INVOICES", "INVOICE_ATTENTION", "LIST_INVOICES", "PREPARE_INVOICE_REMINDER", "DEBT_OVERVIEW", "DEBT_UNIT_DETAIL", "EXPLAIN_DEBT_PRIORITY", "PREPARE_COLLECTION_FOLLOWUP"];
+  let state = {};
+  const answers: string[] = [];
+  prompts.forEach((prompt, index) => {
+    const inferred = inferDeterministicRead(prompt, state)!;
+    assert.equal(inferred.name, expectedTools[index]);
+    const result = runAgentTool(inferred.name, inferred.arguments);
+    answers.push(trustedResponse(result).answer);
+    state = updateConversationState(state, inferred.name, result);
+  });
+  assert.equal((state as any).activeDomain, "debt");
+  assert.equal((state as any).activeOrganization, "Arenales 2210");
+  assert.equal((state as any).activeUnit, "2A");
+  assert.match(answers[4], /Todavía no está programado/);
+  assert.match(answers[2], /Aguas del Río/);
+  assert.match(answers[7], /74 días de atraso/);
+  assert.match(answers[8], /No se enviará hasta que lo apruebes/);
+  assert.equal(trustedResponse(runAgentTool("PREPARE_COLLECTION_FOLLOWUP", { organization: "Arenales 2210", unit: "2A" })).suggestions.includes("Ver borrador"), false);
+});
+
+test("V6.2 — approved natural-language variants route through the narrow deterministic surface", () => {
+  const cases: Array<[string, any, string, string | undefined]> = [
+    ["¿Qué tengo que mirar hoy?", {}, "TODAY_ATTENTION", undefined],
+    ["Mostrame lo pendiente de facturas.", { activeDomain: "invoices" }, "LIST_INVOICES", "unpaid"],
+    ["¿Cuál es la próxima en vencer?", { activeDomain: "invoices" }, "INVOICE_ATTENTION", "next_due"],
+    ["¿Qué facturas vencen en los próximos 7 días?", { activeDomain: "invoices" }, "LIST_INVOICES", "this_week"],
+    ["¿Cómo viene la mora?", {}, "DEBT_OVERVIEW", undefined],
+    ["¿Cuál debería priorizar?", { activeDomain: "debt", activeOrganization: "Arenales 2210" }, "DEBT_UNIT_DETAIL", undefined],
+    ["¿Por qué esa?", { activeDomain: "debt", activeOrganization: "Arenales 2210", activeUnit: "2A" }, "EXPLAIN_DEBT_PRIORITY", undefined],
+    ["Prepará el seguimiento.", { activeDomain: "debt", activeOrganization: "Arenales 2210", activeUnit: "2A" }, "PREPARE_COLLECTION_FOLLOWUP", undefined],
+  ];
+  for (const [message, state, expectedTool, expectedWindow] of cases) {
+    const route = inferDeterministicRead(message, state)!;
+    assert.equal(route.name, expectedTool, message);
+    if (expectedWindow) assert.equal(route.arguments.window ?? route.arguments.mode, expectedWindow, message);
+  }
+});
+
+test("V6 — new Agent paths remain deterministic, read-only and network-free", async () => {
+  const [tools, page] = await Promise.all([
+    readFile(new URL("../lib/agent-tools.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+  ]);
+  for (const name of ["LIST_INVOICES", "INVOICE_ATTENTION", "PREPARE_INVOICE_REMINDER", "EXPLAIN_DEBT_PRIORITY"]) {
+    assert.ok(tools.includes(`name: "${name}"`));
+  }
+  assert.equal(tools.includes("fetch("), false);
+  assert.ok(page.includes("DEMOSTRACIÓN · NO PROGRAMADO"));
+  assert.ok(page.includes("Todavía no se programó ni se envió nada"));
 });

@@ -1,4 +1,4 @@
-import { demoData, demoSelectors } from "./demo-data.ts";
+import { demoData, demoSelectors, formatInvoiceDueDate } from "./demo-data.ts";
 
 type Json = Record<string, unknown>;
 export type ConversationState = {
@@ -10,6 +10,9 @@ export type ConversationState = {
   lastTool?: string | null;
   lastKind?: string | null;
   lastMinimumAmount?: number | null;
+  activeDomain?: "attention" | "invoices" | "debt" | "reconciliation" | "documents" | null;
+  activeInvoiceId?: string | null;
+  lastResultSet?: string[] | null;
 };
 export type ToolResult = { kind: string; data: any; empty?: boolean; args?: Json };
 
@@ -32,6 +35,10 @@ export const agentTools = [
   { type: "function", name: "CURRENT_DOCUMENT_DEADLINE", description: "El documento del consorcio con el vencimiento futuro más próximo. Usar para '¿cuál vence primero?'.", strict: true, parameters: { type: "object", additionalProperties: false, properties: { organization: { type: ["string", "null"] } }, required: ["organization"] } },
   { type: "function", name: "CURRENT_MAINTENANCE", description: "Estado de mantenimiento de los activos (ascensores) de un consorcio: próximo mantenimiento, proveedor.", strict: true, parameters: { type: "object", additionalProperties: false, properties: { organization: { type: ["string", "null"] } }, required: ["organization"] } },
   { type: "function", name: "PREPARE_COLLECTION_FOLLOWUP", description: "Prepara (sin enviar) un borrador de seguimiento de cobranza para una unidad en mora. Si no se especifica unidad, usa la unidad con mora crítica del consorcio.", strict: true, parameters: { type: "object", additionalProperties: false, properties: { organization: { type: ["string", "null"] }, unit: { type: ["string", "null"] } }, required: ["organization", "unit"] } },
+  { type: "function", name: "LIST_INVOICES", description: "Lista hasta tres facturas ordenadas por atención y vencimiento. Permite consultar todas, pendientes de pago o las que vencen esta semana.", strict: true, parameters: { type: "object", additionalProperties: false, properties: { organization: { type: ["string", "null"] }, window: { type: "string", enum: ["all", "attention", "this_week", "unpaid"] } }, required: ["organization", "window"] } },
+  { type: "function", name: "INVOICE_ATTENTION", description: "Consulta facturas que requieren atención o la próxima factura impaga que vence hoy o en el futuro.", strict: true, parameters: { type: "object", additionalProperties: false, properties: { organization: { type: ["string", "null"] }, mode: { type: "string", enum: ["attention", "next_due"] } }, required: ["organization", "mode"] } },
+  { type: "function", name: "PREPARE_INVOICE_REMINDER", description: "Prepara un preview local de recordatorio para la factura activa. Nunca agenda ni envía.", strict: true, parameters: { type: "object", additionalProperties: false, properties: { organization: { type: ["string", "null"] }, invoice_id: { type: ["string", "null"] } }, required: ["organization", "invoice_id"] } },
+  { type: "function", name: "EXPLAIN_DEBT_PRIORITY", description: "Explica con datos determinísticos por qué la unidad morosa activa merece atención, sin score inventado.", strict: true, parameters: { type: "object", additionalProperties: false, properties: { organization: { type: ["string", "null"] }, unit: { type: ["string", "null"] } }, required: ["organization", "unit"] } },
 ] as const;
 
 const norm = (value: unknown) => String(value ?? "").toLocaleLowerCase("es-AR").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -45,6 +52,12 @@ export function resolveToolArgs(name: string, raw: Json, state: ConversationStat
   const args = { ...raw };
   if (["RECONCILIATION_REVIEW", "DEBT_UNIT_DETAIL", "ORGANIZATION_LOOKUP", "DOCUMENT_LOOKUP", "UPCOMING_DOCUMENTS", "PAYMENT_EVIDENCE", "ATTENTION_SUMMARY", "CONTEXT_SUMMARY", "CURRENT_INVOICE", "CURRENT_DOCUMENT_DEADLINE", "CURRENT_MAINTENANCE", "PREPARE_COLLECTION_FOLLOWUP"].includes(name) && !args.organization) args.organization = state.activeOrganization ?? null;
   if (name === "PREPARE_COLLECTION_FOLLOWUP" && !args.unit) args.unit = state.activeUnit ?? null;
+  if (["LIST_INVOICES", "INVOICE_ATTENTION", "PREPARE_INVOICE_REMINDER"].includes(name) && !args.organization) args.organization = state.activeOrganization ?? null;
+  if (name === "PREPARE_INVOICE_REMINDER" && !args.invoice_id) args.invoice_id = state.activeInvoiceId ?? null;
+  if (name === "EXPLAIN_DEBT_PRIORITY") {
+    if (!args.organization) args.organization = state.activeOrganization ?? null;
+    if (!args.unit) args.unit = state.activeUnit ?? null;
+  }
   if (name === "DEBT_OVERVIEW" && args.scope === "active_organization" && !args.organization) args.organization = state.activeOrganization ?? null;
   if (name === "DEBT_UNIT_DETAIL" && args.minimum_amount == null && state.lastKind === "debt_units") args.minimum_amount = state.lastMinimumAmount ?? null;
   if (name === "RECONCILIATION_LOOKUP" && !args.reference && state.activePayment) args.reference = state.activePayment;
@@ -64,7 +77,7 @@ export function resolveToolArgs(name: string, raw: Json, state: ConversationStat
 export function inferDeterministicRead(
   message: string,
   state: ConversationState,
-): { name: "UNIT_LOOKUP"; arguments: Json } | null {
+): { name: string; arguments: Json } | null {
   const text = norm(message);
   const explicitOrganization = demoData.consortia.find((item) =>
     text.includes(norm(item.name)),
@@ -79,6 +92,18 @@ export function inferDeterministicRead(
     );
   const organization = explicitOrganization ?? state.activeOrganization ?? null;
   const unit = explicitUnit ?? (asksAboutUnit ? state.activeUnit ?? null : null);
+  if (/que (?:necesita|requiere|tengo que mirar).*atencion hoy|que tengo que mirar hoy/.test(text)) return { name: "TODAY_ATTENTION", arguments: {} };
+  if (/mostrame.*pendiente.*facturas|pendiente.*de facturas/.test(text)) return { name: "LIST_INVOICES", arguments: { organization, window: "unpaid" } };
+  if (/mostrame.*facturas|listar?.*facturas/.test(text)) return { name: "LIST_INVOICES", arguments: { organization, window: "all" } };
+  if (/que facturas.*atencion|facturas.*requieren.*atencion/.test(text)) return { name: "INVOICE_ATTENTION", arguments: { organization, mode: "attention" } };
+  if (/que (?:facturas )?vence.*esta semana|facturas.*proximos 7 dias/.test(text)) return { name: "LIST_INVOICES", arguments: { organization, window: "this_week" } };
+  if (/que tengo pendiente.*pagar|pendiente.*pagar/.test(text)) return { name: "LIST_INVOICES", arguments: { organization, window: "unpaid" } };
+  if (/cual (?:vence primero|es la proxima en vencer)/.test(text) && state.activeDomain === "invoices") return { name: "INVOICE_ATTENTION", arguments: { organization, mode: "next_due" } };
+  if (/prepara.*recordatorio|recordame.*factura|recordame.*revisar/.test(text)) return { name: "PREPARE_INVOICE_REMINDER", arguments: { organization, invoice_id: state.activeInvoiceId ?? null } };
+  if (/y de mora|de mora como|como estamos.*mora|como viene.*mora/.test(text)) return { name: "DEBT_OVERVIEW", arguments: { organization: null, scope: "portfolio" } };
+  if (/cual es la peor|cual.*atenderias primero|cual.*deberia priorizar/.test(text) && state.activeDomain === "debt") return { name: "DEBT_UNIT_DETAIL", arguments: { organization, minimum_amount: 0, mode: "prioritize" } };
+  if (/^¿?por que(?: esa)?\??$/.test(text.trim()) && state.activeDomain === "debt") return { name: "EXPLAIN_DEBT_PRIORITY", arguments: { organization, unit: state.activeUnit ?? null } };
+  if (/prepara.*seguimiento/.test(text)) return { name: "PREPARE_COLLECTION_FOLLOWUP", arguments: { organization, unit: state.activeUnit ?? null } };
   if (organization && unit && asksAboutUnit && !asksAboutAnotherDomain) {
     return { name: "UNIT_LOOKUP", arguments: { organization, unit } };
   }
@@ -89,7 +114,7 @@ export function runAgentTool(name: string, args: Json): ToolResult {
   switch (name) {
     case "PORTFOLIO_OVERVIEW": return { kind: "portfolio", args, data: { consortia: demoData.portfolio.consortia, units: demoData.portfolio.units, attention: demoSelectors.attentionCases().length, decisions: demoSelectors.decisionCases().length, pending: demoSelectors.debtTotal(), pendingUnits: demoSelectors.pendingUnits().length } };
     case "TODAY_ATTENTION":
-      return { kind: "today", args, data: { decisions: demoSelectors.decisionCases().length, needsInformation: demoData.reconciliation.informationCases.length, priorityPayment: demoData.reconciliation.featuredPayment, priorityDebt: { ...demoData.collections.overdue[0], amount: demoData.collections.overdue[0].outstanding }, deadlines: demoData.documents.filter((d) => needsDocumentAttention(d.status)) } };
+      return { kind: "today", args, data: { priorities: demoSelectors.unifiedAttention(), total: demoSelectors.unifiedAttention().length } };
     case "RECONCILIATION_REVIEW": { const payments = demoData.reconciliation.decisionCases.filter((payment) => !args.organization || payment.candidates.some((candidate) => includes(candidate.consortium, args.organization))); return { kind: "reconciliation", args, data: { organization: args.organization || null, summary: demoData.reconciliation, payments }, empty: payments.length === 0 }; }
     case "RECONCILIATION_LOOKUP": { const p = demoData.reconciliation.featuredPayment; const match = (!args.amount || Number(args.amount) === p.amount) && includes(p.reference, args.reference) && p.candidates.some((c) => includes(c.consortium, args.organization) && includes(c.unit, args.unit)); return { kind: "payment", args, data: match ? p : null, empty: !match }; }
     case "DEBT_OVERVIEW": { const requested = args.scope === "active_organization" && args.organization ? orgByName(args.organization) : null; const ranked = [...demoData.consortia].sort((a,b) => b.debt-a.debt); const selected = requested || ranked[0]; return { kind: "debt", args, data: { scope: requested ? "organization" : "ranking", organization: selected, portfolio: { pending: demoData.collections.pending, unitsWithBalance: demoData.collections.unitsWithBalance }, ranking: ranked.map(({ name, debt, pending, status }) => ({ name, debt, unitsWithBalance: pending, status })) }, empty: !selected }; }
@@ -114,6 +139,31 @@ export function runAgentTool(name: string, args: Json): ToolResult {
       const message = demoSelectors.buildFollowupMessage(unitRecord);
       return { kind: "collection_followup", args: { ...args, organization: organization.name, unit: unitRecord.unit }, data: { organization: organization.name, unit: unitRecord.unit, owner: unitRecord.owner, outstanding: unitRecord.outstanding, days: unitRecord.days, status: unitRecord.status, message, playbook: demoData.collectionPlaybook }, empty: false };
     }
+    case "LIST_INVOICES": {
+      const organization = args.organization ? orgByName(args.organization) : null;
+      const organizationName = organization?.name ?? null;
+      let rows = args.window === "this_week" ? demoSelectors.invoicesDueThisWeek(organizationName) : args.window === "attention" ? demoSelectors.invoiceAttention(organizationName) : demoSelectors.invoicesByAttention(organizationName);
+      if (args.window === "unpaid") rows = rows.filter((invoice) => !invoice.paid);
+      return { kind: "invoice_list", args: { ...args, organization: organizationName }, data: { organization: organizationName, window: args.window, invoices: rows.slice(0, 3), total: rows.length }, empty: rows.length === 0 };
+    }
+    case "INVOICE_ATTENTION": {
+      const organization = args.organization ? orgByName(args.organization) : null;
+      const organizationName = organization?.name ?? null;
+      const rows = demoSelectors.invoiceAttention(organizationName);
+      const first = args.mode === "next_due" ? demoSelectors.nextUnpaidInvoice(organizationName) : rows[0] ?? null;
+      return { kind: "invoice_attention", args: { ...args, organization: organizationName }, data: { organization: organizationName, mode: args.mode, first, invoices: rows.slice(0, 3), overdue: rows.filter((invoice) => invoice.status === "VENCIDA"), total: rows.length }, empty: !first && rows.length === 0 };
+    }
+    case "PREPARE_INVOICE_REMINDER": {
+      const rows = demoSelectors.invoicesByAttention(args.organization ? orgByName(args.organization)?.name ?? null : null);
+      const invoice = rows.find((row) => row.id === args.invoice_id) ?? rows.find((row) => !row.paid) ?? null;
+      return { kind: "invoice_reminder", args, data: invoice ? demoSelectors.reminderPreview(invoice) : null, empty: !invoice };
+    }
+    case "EXPLAIN_DEBT_PRIORITY": {
+      const organization = orgByName(args.organization);
+      if (!organization) return { kind: "needs_context", args, data: { missing: "organization" }, empty: true };
+      const unit = demoData.collections.overdue.find((row) => row.consortium === organization.name && includes(row.unit, args.unit));
+      return { kind: "debt_explanation", args, data: unit ? { organization: organization.name, unit: unit.unit, outstanding: unit.outstanding, days: unit.days, status: unit.status, ...demoSelectors.collectionPriorityReasons(unit) } : null, empty: !unit };
+    }
     default: return { kind: "unsupported", args, data: null, empty: true };
   }
 }
@@ -135,6 +185,15 @@ export function updateConversationState(previous: ConversationState, tool: strin
   // tenga que repetirla.
   if (result.kind === "attention_summary" && data?.items?.[0]?.category === "mora") next.activeUnit = data.items[0].unit.unit;
   if (result.kind === "debt_units") next.lastMinimumAmount = data.minimumAmount;
+  if (result.kind === "today") { next.activeDomain = "attention"; next.lastResultSet = data.priorities.map((item: any) => item.domain); }
+  if (result.kind === "invoice_list") { next.activeDomain = "invoices"; next.activeInvoiceId = data.invoices[0]?.id ?? next.activeInvoiceId; next.activeOrganization = data.organization ?? data.invoices[0]?.consortium ?? next.activeOrganization; next.lastResultSet = data.invoices.map((invoice: any) => invoice.id); }
+  if (result.kind === "invoice_attention") { next.activeDomain = "invoices"; next.activeInvoiceId = data.first?.id ?? next.activeInvoiceId; next.activeOrganization = data.organization ?? data.first?.consortium ?? next.activeOrganization; next.lastResultSet = data.invoices.map((invoice: any) => invoice.id); }
+  if (result.kind === "invoice_reminder") { next.activeDomain = "invoices"; next.activeInvoiceId = data?.invoiceId ?? next.activeInvoiceId; }
+  if (result.kind === "debt") { next.activeDomain = "debt"; next.activeOrganization = data.organization?.name ?? next.activeOrganization; next.lastResultSet = data.ranking?.map((item: any) => item.name).slice(0, 3) ?? null; }
+  if (result.kind === "debt_units") { next.activeDomain = "debt"; next.activeUnit = data.units[0]?.unit ?? next.activeUnit; next.lastResultSet = data.units.map((unit: any) => unit.unit); }
+  if (result.kind === "debt_explanation" || result.kind === "collection_followup") next.activeDomain = "debt";
+  if (result.kind === "reconciliation") next.activeDomain = "reconciliation";
+  if (result.kind === "documents_upcoming" || result.kind === "document_deadline" || result.kind === "document") next.activeDomain = "documents";
   return next;
 }
 
@@ -156,7 +215,10 @@ export function trustedResponse(result: ToolResult) {
   if (result.empty) return { answer: result.kind === "debt_units" ? "No encontré unidades que coincidan con ese filtro." : "No encontré resultados que coincidan en los datos simulados.", suggestions: [] };
   switch (result.kind) {
     case "portfolio": return { answer: `Administrás ${d.consortia} consorcios y ${d.units} unidades. Hoy hay ${d.attention} situaciones que requieren atención, de las cuales ${d.decisions} requieren decisión. La deuda pendiente total es ${money(d.pending)} en ${d.pendingUnits} unidades.`, suggestions: ["¿Qué requiere mi atención hoy?", "¿Dónde tengo mayor mora?", "Mostrame las conciliaciones"] };
-    case "today": return { answer: `Hoy hay ${d.decisions} conciliaciones que requieren decisión y ${d.needsInformation} que necesitan información. La prioridad es revisar el pago de ${money(d.priorityPayment.amount)} y la unidad ${d.priorityDebt.unit} de ${d.priorityDebt.consortium}, con ${money(d.priorityDebt.amount)} pendientes.`, suggestions: ["Mostrame las conciliaciones", "Explicame la más urgente", "¿Hay algún documento que venza pronto?"] };
+    case "today": {
+      const lines = d.priorities.map((item: any, index: number) => item.domain === "mora" ? `${index + 1}. Mora crítica — ${item.organization} · ${item.unit} · ${money(item.amount)} · ${item.days} días.` : item.domain === "facturas" ? `${index + 1}. ${item.invoice.status[0]}${item.invoice.status.slice(1).toLowerCase()} — ${item.invoice.provider} · ${money(item.invoice.amount)} · ${formatInvoiceDueDate(item.invoice.dueDate)} · ${item.invoice.reason}.` : `${index + 1}. Conciliación — ${item.count} movimientos requieren revisión.`);
+      return { answer: `Hoy priorizaría ${d.total} frentes:\n${lines.join("\n")}`, suggestions: ["Mostrame las facturas.", "¿Y de mora cómo estamos?", "Mostrame las conciliaciones"] };
+    }
     case "reconciliation": return { answer: d.payments.length ? `Hay ${d.summary.requiresDecision} conciliaciones que requieren decisión. La más urgente es el pago de ${money(d.payments[0].amount)} recibido el ${shortDate(d.payments[0].receivedAt)}, con ${d.payments[0].candidates.length} unidades compatibles.` : "No encontré conciliaciones pendientes para ese consorcio.", suggestions: d.payments.length ? ["Explicame la más urgente", "¿Por qué corresponde a esa unidad?", `Buscame el pago de ${money(d.payments[0].amount)}`] : [] };
     case "payment": return { answer: `Encontré el pago de ${money(d.amount)}, referencia ${d.reference}. Tiene ${d.candidates.length} unidades compatibles y requiere confirmación humana.`, suggestions: ["¿Por qué corresponde a esa unidad?", "¿Llegó el comprobante?", "Mostrame las conciliaciones"] };
     case "evidence": return { answer: `ConcilIA propone ${d.candidate.consortium} · ${d.candidate.unit} por estas señales: ${d.candidate.evidence.join(", ").toLowerCase()}. Como hay ${d.alternatives} candidatos compatibles, requiere confirmación humana.`, suggestions: ["Mostrame las conciliaciones", "¿Cómo está ese consorcio?", "¿Dónde tengo mayor mora?"] };
@@ -180,15 +242,29 @@ export function trustedResponse(result: ToolResult) {
       const lines = d.items.map((item: any) => describeAttentionItem(item));
       return { answer: `${org.name}: ${org.collectionRate}% de cobranza, ${money(org.debt)} pendientes en ${org.pending} unidades.${d.items.length ? ` Frentes abiertos: ${lines.join("; ")}.` : " Sin frentes abiertos registrados."}`, suggestions: ["¿Qué es lo más urgente?", "¿Cuáles son las unidades en mora?", "¿Qué documentos vencen pronto?"] };
     }
-    case "current_invoice": return { answer: `${d.invoice.provider}\n${d.invoice.concept}\n${money(d.invoice.amount)}\nVence ${d.invoice.dueDate}\n${d.invoice.status}`, suggestions: ["Ver factura", "¿Qué es lo más urgente?", `¿Cómo está ${d.organization}?`] };
+    case "current_invoice": return { answer: `${d.invoice.provider}\n${d.invoice.concept}\n${money(d.invoice.amount)}\nVence ${formatInvoiceDueDate(d.invoice.dueDate)}\n${d.invoice.status}`, suggestions: ["Ver factura", "¿Qué es lo más urgente?", `¿Cómo está ${d.organization}?`] };
     case "document_deadline": return { answer: `El próximo vencimiento es ${d.document.type} de ${d.document.provider}, el ${d.document.date} (${d.document.status.toLowerCase()}).`, suggestions: ["¿Hay algún documento que venza pronto?", `¿Cómo está ${d.organization}?`] };
     case "current_maintenance": return { answer: `${d.asset.name}\n${d.asset.status}\nPróximo mantenimiento: ${d.asset.nextMaintenance}\nProveedor: ${d.asset.provider}`, suggestions: ["¿Cuándo fue el último mantenimiento?", `¿Cómo está ${d.organization}?`] };
-    case "collection_followup": return { answer: `Preparé un borrador de seguimiento para ${d.organization} · Unidad ${d.unit} (${money(d.outstanding)}, ${d.days} días, ${d.status.toLowerCase()}). No se enviará hasta que lo apruebes.`, suggestions: ["Ver borrador", "¿Qué es lo más urgente?", `¿Cómo está ${d.organization}?`] };
+    case "collection_followup": return { answer: `Preparé un borrador de seguimiento para ${d.organization} · Unidad ${d.unit} (${money(d.outstanding)}, ${d.days} días, ${d.status.toLowerCase()}). No se enviará hasta que lo apruebes.`, suggestions: ["¿Qué es lo más urgente?", `¿Cómo está ${d.organization}?`] };
+    case "invoice_list": {
+      const lead = d.window === "this_week" ? `${d.total} factura${d.total === 1 ? " vence" : "s vencen"} esta semana.` : d.window === "unpaid" ? `Hay ${d.total} factura${d.total === 1 ? "" : "s"} pendiente${d.total === 1 ? "" : "s"} de pago.` : `Estas son las ${Math.min(d.total, 3)} facturas prioritarias.`;
+      const rows = d.invoices.map((invoice: any) => `${invoice.provider} · ${money(invoice.amount)} · ${formatInvoiceDueDate(invoice.dueDate)} · ${invoice.reason}.`);
+      return { answer: `${lead}\n${rows.join("\n")}`, suggestions: ["¿Cuál vence primero?", "¿Qué vence esta semana?", "Preparame un recordatorio para mañana."] };
+    }
+    case "invoice_attention": {
+      if (d.mode === "next_due") {
+        if (!d.first) return { answer: `No hay facturas impagas con vencimiento futuro.${d.overdue.length ? ` Hay ${d.overdue.length} vencida${d.overdue.length === 1 ? "" : "s"} que requiere${d.overdue.length === 1 ? "" : "n"} atención.` : ""}`, suggestions: ["¿Qué facturas requieren atención?", "¿Y de mora cómo estamos?"] };
+        return { answer: `La próxima en vencer es ${d.first.provider}: ${money(d.first.amount)}, el ${formatInvoiceDueDate(d.first.dueDate)}. ${d.first.reason}.`, suggestions: ["¿Qué vence esta semana?", "Preparame un recordatorio para mañana.", "¿Y de mora cómo estamos?"] };
+      }
+      return { answer: `La primera que atendería es ${d.first.provider}: ${money(d.first.amount)}, vence el ${formatInvoiceDueDate(d.first.dueDate)}. ${d.first.reason}.`, suggestions: ["¿Qué vence esta semana?", "Preparame un recordatorio para mañana.", "¿Y de mora cómo estamos?"] };
+    }
+    case "invoice_reminder": return { answer: `Preparé un recordatorio para revisar la factura de ${d.provider} mañana. Todavía no está programado.`, suggestions: ["¿Y de mora cómo estamos?", "Mostrame las facturas."] };
+    case "debt_explanation": return { answer: `La priorizaría por tres razones:\n${d.reasons.map((reason: string) => `• ${reason}`).join("\n")}`, suggestions: ["Preparame el seguimiento.", "¿Cómo está ese consorcio?"] };
     default: return { answer: "Todavía no puedo consultar ese detalle.", suggestions: ["¿Qué requiere mi atención hoy?", "¿Dónde tengo mayor mora?"] };
   }
 }
 
 export function trustedPresentation(result: ToolResult) {
-  const actionByKind: Record<string, { label: string; view: string } | null> = { portfolio: { label: "Ver inicio", view: "home" }, today: { label: "Ver prioridades", view: "home" }, reconciliation: { label: "Ver conciliaciones", view: "reconciliation" }, payment: { label: "Revisar pago", view: "resolution" }, evidence: { label: "Ver evidencia", view: "evidence" }, debt: { label: "Ver morosidad", view: "debt" }, debt_units: { label: "Ver morosidad", view: "debt" }, organization: { label: "Ver consorcio", view: "consortium" }, unit: { label: "Ver consorcio", view: "consortium" }, document: { label: "Ver documentos", view: "documents" }, documents_upcoming: { label: "Ver documentos", view: "documents" }, attention_summary: { label: "Ver consorcio", view: "consortium" }, context_summary: { label: "Ver consorcio", view: "consortium" }, current_invoice: { label: "Ver factura", view: "invoices" }, document_deadline: { label: "Ver documentos", view: "documents" }, current_maintenance: { label: "Ver mantenimiento", view: "maintenance" }, collection_followup: { label: "Ver borrador", view: "collection" } };
+  const actionByKind: Record<string, { label: string; view: string } | null> = { portfolio: { label: "Ver inicio", view: "home" }, today: { label: "Ver atención de hoy", view: "home" }, reconciliation: { label: "Ver conciliaciones", view: "reconciliation" }, payment: { label: "Revisar pago", view: "resolution" }, evidence: { label: "Ver evidencia", view: "evidence" }, debt: { label: "Ver morosidad", view: "debt" }, debt_units: { label: "Ver morosidad", view: "debt" }, debt_explanation: { label: "Ver morosidad", view: "debt" }, organization: { label: "Ver consorcio", view: "consortium" }, unit: { label: "Ver consorcio", view: "consortium" }, document: { label: "Ver documentos", view: "documents" }, documents_upcoming: { label: "Ver documentos", view: "documents" }, attention_summary: { label: "Ver consorcio", view: "consortium" }, context_summary: { label: "Ver consorcio", view: "consortium" }, current_invoice: { label: "Ver factura", view: "invoices" }, invoice_list: { label: "Ver facturas", view: "invoices" }, invoice_attention: { label: "Ver facturas", view: "invoices" }, document_deadline: { label: "Ver documentos", view: "documents" }, current_maintenance: { label: "Ver mantenimiento", view: "maintenance" }, collection_followup: { label: "Ver borrador", view: "collection" } };
   return { topic: result.kind, result: result.data, action: actionByKind[result.kind] ?? null };
 }

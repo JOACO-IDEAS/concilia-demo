@@ -7,14 +7,15 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit --incremental false",
+    "test": "npm run test:data",
     "test:data": "node --experimental-strip-types --test tests/demo-data.test.ts"
   },
   "dependencies": {
     "@upstash/ratelimit": "^2.0.6",
     "@upstash/redis": "^1.35.7",
     "@vercel/analytics": "^1.5.0",
-    "next": "16.2.6",
+    "next": "^16.3.8",
     "react": "19.2.6",
     "react-dom": "19.2.6"
   },

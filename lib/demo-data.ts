@@ -93,10 +93,43 @@ const documents = [
 // de cartera completa. El proveedor de ascensores es el MISMO que ya aparece en
 // `documents` y en `maintenanceAssets` — una sola relación, contada tres veces.
 const invoices = [
-  { id: "inv-arenales-ascensores", provider: "Christophersen Ascensores", concept: "Mantenimiento de ascensores", amount: 340000, dueDate: "15/09/2026", consortium: "Arenales 2210", status: "Pendiente" },
-  { id: "inv-arenales-agua", provider: "Aguas del Río", concept: "Servicio de agua", amount: 128000, dueDate: "05/09/2026", consortium: "Arenales 2210", status: "Próxima a vencer" },
-  { id: "inv-arenales-luz", provider: "Luz Metropolitana", concept: "Servicio eléctrico", amount: 96500, dueDate: "28/08/2026", consortium: "Arenales 2210", status: "Pagada" },
+  { id: "inv-arenales-ascensores", provider: "Christophersen Ascensores", concept: "Mantenimiento de ascensores", amount: 340000, dueDate: "2026-09-15", consortium: "Arenales 2210", paid: false },
+  { id: "inv-arenales-agua", provider: "Aguas del Río", concept: "Servicio de agua", amount: 128000, dueDate: "2026-08-26", consortium: "Arenales 2210", paid: false },
+  { id: "inv-arenales-limpieza", provider: "Limpieza Integral SRL", concept: "Limpieza de espacios comunes", amount: 186000, dueDate: "2026-08-18", consortium: "Arenales 2210", paid: false },
+  { id: "inv-arenales-luz", provider: "Luz Metropolitana", concept: "Servicio eléctrico", amount: 96500, dueDate: "2026-08-28", consortium: "Arenales 2210", paid: true },
 ];
+
+export const INVOICE_TEMPORAL_POLICY = {
+  upcomingDays: 21,
+  thisWeekDays: 7,
+} as const;
+
+export type InvoiceTemporalStatus = "PAGADA" | "VENCIDA" | "VENCE HOY" | "PRÓXIMA A VENCER" | "PENDIENTE";
+
+const dateOnlyUtc = (value: string) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) throw new Error(`Invalid ISO date: ${value}`);
+  return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+};
+
+const demoDayUtc = dateOnlyUtc(DEMO_DATE.slice(0, 10));
+const DAY_MS = 86_400_000;
+
+export const parseInvoiceDueDate = (value: string) => dateOnlyUtc(value);
+
+export const deriveInvoiceTemporalState = (invoice: (typeof invoices)[number]) => {
+  const daysUntilDue = Math.round((parseInvoiceDueDate(invoice.dueDate) - demoDayUtc) / DAY_MS);
+  let status: InvoiceTemporalStatus;
+  if (invoice.paid) status = "PAGADA";
+  else if (daysUntilDue < 0) status = "VENCIDA";
+  else if (daysUntilDue === 0) status = "VENCE HOY";
+  else if (daysUntilDue <= INVOICE_TEMPORAL_POLICY.upcomingDays) status = "PRÓXIMA A VENCER";
+  else status = "PENDIENTE";
+  const reason = status === "PAGADA" ? "Pago registrado" : status === "VENCIDA" ? `Venció hace ${Math.abs(daysUntilDue)} días` : status === "VENCE HOY" ? "Vence hoy" : status === "PRÓXIMA A VENCER" ? `Vence en ${daysUntilDue} días` : `Vence en ${daysUntilDue} días`;
+  return { ...invoice, status, daysUntilDue, reason };
+};
+
+export const formatInvoiceDueDate = (value: string) => new Intl.DateTimeFormat("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" }).format(new Date(parseInvoiceDueDate(value)));
 
 // TASK V3 — Mantenimiento / ascensores. "Operativo" es un estado registrado en la
 // demo, no telemetría en tiempo real: ConcilIA no controla ni monitorea el ascensor.
@@ -218,13 +251,26 @@ export const demoSelectors = {
   },
   // Facturas agrupadas por estado real — mismo criterio de partición exhaustiva.
   invoiceStatusGroups: (organizationName: string) => {
-    const inv = demoData.invoices.filter((i) => i.consortium === organizationName);
+    const inv = demoSelectors.invoicesByAttention(organizationName);
     return {
-      pendientes: inv.filter((i) => i.status === "Pendiente"),
-      proximas: inv.filter((i) => i.status === "Próxima a vencer"),
-      pagadas: inv.filter((i) => i.status === "Pagada"),
+      pendientes: inv.filter((i) => i.status === "PENDIENTE"),
+      proximas: inv.filter((i) => i.status === "PRÓXIMA A VENCER" || i.status === "VENCE HOY"),
+      vencidas: inv.filter((i) => i.status === "VENCIDA"),
+      pagadas: inv.filter((i) => i.status === "PAGADA"),
     };
   },
+  invoiceTemporalRows: (organizationName?: string | null) => demoData.invoices
+    .filter((invoice) => !organizationName || invoice.consortium === organizationName)
+    .map(deriveInvoiceTemporalState),
+  invoicesByAttention: (organizationName?: string | null) => {
+    const rank: Record<InvoiceTemporalStatus, number> = { VENCIDA: 0, "VENCE HOY": 1, "PRÓXIMA A VENCER": 2, PENDIENTE: 3, PAGADA: 4 };
+    return demoSelectors.invoiceTemporalRows(organizationName).sort((a, b) => rank[a.status] - rank[b.status] || parseInvoiceDueDate(a.dueDate) - parseInvoiceDueDate(b.dueDate));
+  },
+  invoicesDueThisWeek: (organizationName?: string | null) => demoSelectors.invoicesByAttention(organizationName).filter((invoice) => !invoice.paid && invoice.daysUntilDue >= 0 && invoice.daysUntilDue <= INVOICE_TEMPORAL_POLICY.thisWeekDays),
+  nextUnpaidInvoice: (organizationName?: string | null) => demoSelectors.invoiceTemporalRows(organizationName)
+    .filter((invoice) => !invoice.paid && invoice.daysUntilDue >= 0)
+    .sort((a, b) => parseInvoiceDueDate(a.dueDate) - parseInvoiceDueDate(b.dueDate))[0] ?? null,
+  invoiceAttention: (organizationName?: string | null) => demoSelectors.invoicesByAttention(organizationName).filter((invoice) => invoice.status === "VENCIDA" || invoice.status === "VENCE HOY" || invoice.status === "PRÓXIMA A VENCER"),
   // TASK V3 — "Requiere tu atención" para un consorcio: la MISMA lista que usa tanto
   // la UI (Consorcio 360) como el Agente (ATTENTION_SUMMARY), para que nunca existan
   // dos resúmenes distintos del mismo estado. El orden del array ES la prioridad
@@ -239,8 +285,7 @@ export const demoSelectors = {
     const urgentDocuments = [...atencion, ...proximos];
     if (urgentDocuments.length) items.push({ category: "documentos", count: urgentDocuments.length, documents: urgentDocuments, view: "documents" });
 
-    const { pendientes, proximas: proximasFacturas } = demoSelectors.invoiceStatusGroups(organizationName);
-    const urgentInvoices = [...pendientes, ...proximasFacturas];
+    const urgentInvoices = demoSelectors.invoiceAttention(organizationName);
     if (urgentInvoices.length) items.push({ category: "facturas", count: urgentInvoices.length, invoices: urgentInvoices, view: "invoices" });
 
     const orgDecisionCases = demoSelectors.decisionCases(resolved).filter((payment) => payment.candidates.some((c) => c.consortium === organizationName));
@@ -266,6 +311,28 @@ export const demoSelectors = {
   buildFollowupMessage: (unit: { owner: string; unit: string; consortium: string; outstanding: number }) => {
     const firstName = unit.owner.split(" ")[0];
     return `Hola ${firstName}, te contactamos por el saldo pendiente de la unidad ${unit.unit} de ${unit.consortium}. Actualmente registra $${unit.outstanding.toLocaleString("es-AR")} pendientes. Cualquier consulta, estamos a disposición.`;
+  },
+  collectionPriorityReasons: (unit: { outstanding: number; days: number; status: string; promise: string | null; lastContact: string }) => {
+    const reasons = [`${unit.days} días de atraso`, `$${unit.outstanding.toLocaleString("es-AR")} pendientes`];
+    if (!unit.promise) reasons.push("Sin promesa de pago registrada");
+    else reasons.push(`Promesa registrada: ${unit.promise}`);
+    return { reasons: reasons.slice(0, 3), lastContact: unit.lastContact };
+  },
+  unifiedAttention: (resolved = false) => {
+    const priorityDebt = demoData.collections.overdue
+      .filter((unit) => unit.status === "Mora crítica")
+      .sort((a, b) => b.days - a.days || b.outstanding - a.outstanding)[0];
+    const invoice = demoSelectors.invoiceAttention()[0] ?? null;
+    const reconciliationCount = demoSelectors.decisionCases(resolved).length;
+    return [
+      priorityDebt ? { domain: "mora", priority: 1, organization: priorityDebt.consortium, unit: priorityDebt.unit, amount: priorityDebt.outstanding, days: priorityDebt.days, status: priorityDebt.status } : null,
+      invoice ? { domain: "facturas", priority: 2, invoice } : null,
+      reconciliationCount ? { domain: "conciliacion", priority: 3, count: reconciliationCount } : null,
+    ].filter(Boolean);
+  },
+  reminderPreview: (invoice: ReturnType<typeof deriveInvoiceTemporalState>) => {
+    const tomorrow = new Date(demoDayUtc + DAY_MS).toISOString().slice(0, 10);
+    return { invoiceId: invoice.id, organization: invoice.consortium, provider: invoice.provider, amount: invoice.amount, reminderDate: tomorrow, label: "DEMOSTRACIÓN · NO PROGRAMADO", scheduled: false, sent: false };
   },
   // Comprobante $248.500 aplicado como PAGO PARCIAL sobre la deuda de la unidad —
   // nunca implica que salda el total. El saldo restante siempre se calcula, nunca

@@ -1,7 +1,7 @@
 "use client";
 
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
-import { demoData, demoSelectors } from "../lib/demo-data";
+import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { demoData, demoSelectors, formatInvoiceDueDate } from "../lib/demo-data";
 import { CONCILIA_WORDMARK_DATA_URI } from "../lib/brand-asset";
 import { trackShowroomEvent } from "../lib/client-analytics";
 
@@ -501,8 +501,21 @@ function Home({ resolved, resolvedUnit, go }: { resolved: boolean; resolvedUnit:
   const decisions = demoSelectors.decisionCases(resolved);
   const informationCase = demoData.reconciliation.informationCases[0];
   const recent = demoSelectors.activity(resolved, resolvedUnit);
+  const today = demoSelectors.unifiedAttention(resolved) as any[];
   return (
     <div className="home-grid">
+      <section className="v6-attention card">
+        <SectionTitle eyebrow="ATENCIÓN DE HOY" title="Tres frentes para empezar el día" />
+        <div className="v6-attention-list">
+          {today.map((item: any) => item.domain === "mora" ? (
+            <button key={item.domain} onClick={() => go("debt")}><span className="danger">1</span><p><small>MORA CRÍTICA</small><b>{item.organization} · {item.unit}</b><em>{formatMoney(item.amount)} · {item.days} días</em></p><Icon name="arrow" size={14} /></button>
+          ) : item.domain === "facturas" ? (
+            <button key={item.domain} onClick={() => go("invoices")}><span className="warning">2</span><p><small>{item.invoice.status}</small><b>{item.invoice.provider}</b><em>{formatMoney(item.invoice.amount)} · {formatInvoiceDueDate(item.invoice.dueDate)} · {item.invoice.reason}</em></p><Icon name="arrow" size={14} /></button>
+          ) : (
+            <button key={item.domain} onClick={() => go("reconciliation")}><span>3</span><p><small>CONCILIACIÓN</small><b>{item.count} movimientos requieren revisión</b><em>Decisión humana pendiente</em></p><Icon name="arrow" size={14} /></button>
+          ))}
+        </div>
+      </section>
       <section className="work-queue">
         <SectionTitle
           eyebrow="REQUIERE DECISIÓN"
@@ -1913,16 +1926,19 @@ function Documents({
 
 function Invoices({ organizationName, go }: { organizationName: string; go: (v: View) => void }) {
   const [status, setStatus] = useState("Todas");
-  const filtered = demoData.invoices.filter((x) => status === "Todas" || x.status === status);
+  const rows = demoSelectors.invoicesByAttention(organizationName);
+  const attention = demoSelectors.invoiceAttention(organizationName);
+  const filtered = rows.filter((x) => status === "Todas" || x.status === status);
   return (
     <div className="documents-page">
       <button className="back" onClick={() => go("consortium")}>
         <Icon name="arrow" size={15} /> Volver a {organizationName}
       </button>
+      {attention[0] && <section className="invoice-focus card"><div><small>PRIMERA EN ATENCIÓN</small><b>{attention[0].provider}</b><span>{attention[0].reason} · {formatMoney(attention[0].amount)}</span></div><Status tone={attention[0].status === "VENCIDA" ? "danger" : "warning"}>{attention[0].status}</Status></section>}
       <div className="category-tabs">
-        {["Todas", "Pendiente", "Próxima a vencer", "Pagada"].map((x) => (
+        {["Todas", "VENCIDA", "VENCE HOY", "PRÓXIMA A VENCER", "PENDIENTE", "PAGADA"].map((x) => (
           <button className={status === x ? "active" : ""} onClick={() => setStatus(x)} key={x}>
-            {x === "Todas" ? x : `${x}s`}
+            {x}
           </button>
         ))}
       </div>
@@ -1947,9 +1963,9 @@ function Invoices({ organizationName, go }: { organizationName: string; go: (v: 
                 </p>
               </span>
               <b>{x.consortium}</b>
-              <span>{x.dueDate}</span>
+              <span><b>{formatInvoiceDueDate(x.dueDate)}</b><small>{x.reason}</small></span>
               <strong>{formatMoney(x.amount)}</strong>
-              <Status tone={/pendiente|vencer/i.test(x.status) ? "warning" : "success"}>{x.status}</Status>
+              <Status tone={x.status === "VENCIDA" ? "danger" : x.status === "PAGADA" ? "success" : /PENDIENTE|VENCE|VENCER/.test(x.status) ? "warning" : "neutral"}>{x.status}</Status>
             </div>
           ))
         ) : (
@@ -2184,6 +2200,7 @@ function Copilot({
   const [conversationState, setConversationState] = useState<Record<string, unknown>>({});
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const copilotEndRef = useRef<HTMLDivElement>(null);
   const [sessionId] = useState(() => typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `copilot-${Date.now()}`);
 
   // El Copilot conoce el consorcio actual porque la UI se lo dice de forma
@@ -2193,6 +2210,9 @@ function Copilot({
     if (!open) return;
     setConversationState((cs) => ({ ...cs, activeOrganization: context.consortiumId ?? (cs.activeOrganization as string | null) ?? null }));
   }, [open, context.consortiumId]);
+  useEffect(() => {
+    if (open) copilotEndRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+  }, [messages, loading, open]);
 
   if (hidden) return null;
 
@@ -2231,7 +2251,9 @@ function Copilot({
     setOpen(false);
   };
 
-  const contextLabel = context.consortiumId ? `${context.consortiumId}${context.module && context.module !== "consorcio" ? ` · ${CONTEXT_MODULE_LABEL[context.module]}` : ""}` : "Operación general";
+  const activeDomain = conversationState.activeDomain as string | undefined;
+  const domainLabel: Record<string, string> = { invoices: "Facturas", debt: "Mora", attention: "Atención de hoy", reconciliation: "Conciliación", documents: "Documentos" };
+  const contextLabel = context.consortiumId ? `${context.consortiumId}${activeDomain && domainLabel[activeDomain] ? ` · ${domainLabel[activeDomain]}` : context.module && context.module !== "consorcio" ? ` · ${CONTEXT_MODULE_LABEL[context.module]}` : ""}` : activeDomain && domainLabel[activeDomain] ? domainLabel[activeDomain] : "Operación general";
 
   return (
     <>
@@ -2296,6 +2318,7 @@ function Copilot({
                 <i />
               </div>
             )}
+            <div ref={copilotEndRef} aria-hidden="true" />
           </div>
           <form
             className="copilot-composer"
@@ -2334,6 +2357,7 @@ function Agent({
   const [loading, setLoading] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loadingLabel, setLoadingLabel] = useState("Consultando la operación…");
+  const threadEndRef = useRef<HTMLDivElement>(null);
   const [sessionId] = useState(() => typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `demo-${Date.now()}`);
   // TASK V3 — entrada contextual desde un consorcio: precarga un prompt transparente
   // (nunca lo envía solo) para no fingir contexto oculto que el Agente no recibe.
@@ -2342,6 +2366,9 @@ function Agent({
     setInput(pendingPrompt);
     clearPendingPrompt();
   }, [pendingPrompt, clearPendingPrompt]);
+  useEffect(() => {
+    threadEndRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+  }, [messages, loading]);
   const suggestions = [
     "¿Qué requiere mi atención hoy?",
     "¿Qué pagos necesitan revisión?",
@@ -2398,6 +2425,7 @@ function Agent({
         </div>
       </aside>
       <section className="agent-chat">
+        {Boolean(conversationState.activeDomain) && <div className="agent-context-indicator">Contexto · {String(conversationState.activeOrganization || "Operación general")} · {String(conversationState.activeDomain) === "invoices" ? "Facturas" : String(conversationState.activeDomain) === "debt" ? "Mora" : "Atención"}</div>}
         {messages.length === 0 ? (
           <div className="agent-empty">
             <span>
@@ -2467,6 +2495,7 @@ function Agent({
                 <i /> {loadingLabel}
               </div>
             )}
+            <div ref={threadEndRef} aria-hidden="true" />
           </div>
         )}
         <form
@@ -2555,6 +2584,12 @@ function AgentResult({ topic, result }: { topic: string; result?: unknown }) {
       {data.units.map((unit: any) => <div key={unit.unit}><b>{unit.unit}</b><span>{money(unit.amount)}</span><small>{unit.status}</small></div>)}
     </div>
   );
+  if ((topic === "invoice_list" || topic === "invoice_attention") && (data.invoices || data.first)) {
+    const invoices = data.invoices || [data.first];
+    return <div className="agent-result-list invoice">{invoices.slice(0, 3).map((invoice: any) => <div key={invoice.id}><b>{invoice.provider}</b><span>{money(invoice.amount)}</span><small>{invoice.reason}</small></div>)}</div>;
+  }
+  if (topic === "invoice_reminder") return <ReminderPreview data={data} />;
+  if (topic === "debt_explanation" && data.reasons) return <div className="agent-result-list reasons">{data.reasons.map((reason: string) => <div key={reason}><b>•</b><span>{reason}</span></div>)}</div>;
   if (topic === "document" && data.documents?.[0]) {
     const doc = data.documents[0];
     return (
@@ -2594,18 +2629,20 @@ function AgentResult({ topic, result }: { topic: string; result?: unknown }) {
   }
   if (topic !== "today") return null;
   return (
-    <div className="agent-priorities">
-      <span>
-        <b>{data.decisions}</b> pagos para decidir
-      </span>
-      <span>
-        <b>{data.needsInformation}</b> necesitan información
-      </span>
-      <span>
-        <b>{data.deadlines?.length ?? 0}</b> documentos por atender
-      </span>
-    </div>
+    <div className="agent-result-list attention">{data.priorities?.map((item: any) => <div key={item.domain}><b>{item.domain === "mora" ? "Mora crítica" : item.domain === "facturas" ? "Factura" : "Conciliación"}</b><span>{item.domain === "mora" ? `${item.organization} · ${item.unit}` : item.domain === "facturas" ? item.invoice.provider : `${item.count} movimientos`}</span><small>{item.domain === "mora" ? `${money(item.amount)} · ${item.days} días` : item.domain === "facturas" ? item.invoice.reason : "Requieren revisión"}</small></div>)}</div>
   );
+}
+
+function ReminderPreview({ data }: { data: any }) {
+  const [status, setStatus] = useState<"pending" | "approved" | "cancelled">("pending");
+  if (!data) return null;
+  return <div className="reminder-preview">
+    <small>DEMOSTRACIÓN · NO PROGRAMADO</small>
+    <b>Revisar factura de {data.provider}</b>
+    <span>Mañana · {formatMoney(data.amount)}</span>
+    <span>Todavía no se programó ni se envió nada.</span>
+    {status === "approved" ? <em>Borrador aprobado para demostración.</em> : status === "cancelled" ? <em>Preview cancelado.</em> : <div><button onClick={() => setStatus("approved")}>Aprobar borrador</button><button onClick={() => setStatus("cancelled")}>Cancelar</button></div>}
+  </div>;
 }
 
 function Settings() {

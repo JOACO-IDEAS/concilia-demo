@@ -5,3 +5,14 @@ npm-debug.log*
 .env.local
 dist/
 .wrangler/
+.vercel
+.env*
+!.env.example
+*.tsbuildinfo
+.omc/
+.claude/
+.codex/
+*.log
+coverage/
+reports/
+screenshots/
